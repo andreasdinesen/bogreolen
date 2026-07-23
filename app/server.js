@@ -549,6 +549,26 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* cover-proxy til eksport med billeder: browseren kan ikke laese cross-origin billeddata (canvas-taint) */
+    if (p === '/api/lookup/cover' && req.method === 'GET') {
+      const COVER_HOSTS = ['covers.openlibrary.org', 'books.google.com', 'fbiinfo-present.dbc.dk'];
+      let target;
+      try { target = new URL(String(u.searchParams.get('url') || '')); } catch (e) { return err(res, 400, 'Ugyldig URL'); }
+      if (target.protocol !== 'https:' && target.protocol !== 'http:') return err(res, 400, 'Ugyldig URL');
+      if (!COVER_HOSTS.includes(target.hostname)) return err(res, 403, 'Ukendt billed-kilde');
+      try {
+        const r = await fetch(target, { signal: AbortSignal.timeout(10000), redirect: 'follow' });
+        const ct = r.headers.get('content-type') || '';
+        if (!r.ok || !ct.startsWith('image/')) return err(res, 404, 'Intet billede');
+        const ab = await r.arrayBuffer();
+        if (ab.byteLength > 3000000) return err(res, 413, 'Billedet er for stort');
+        res.writeHead(200, { 'Content-Type': ct, 'Cache-Control': 'private, max-age=3600' });
+        return res.end(Buffer.from(ab));
+      } catch (e) {
+        return err(res, 502, 'Kunne ikke hente billedet');
+      }
+    }
+
     /* admin */
     if (p.startsWith('/api/admin/')) {
       if (!user.is_admin) return err(res, 403, 'Kræver administrator-rettigheder');

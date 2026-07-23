@@ -6,7 +6,7 @@ gameskill:
   category: "Apps"
   description: "Personligt bogbibliotek: scan ISBN, hold styr paa koebte/laeste boeger og oenskeliste. Flere brugere, passkey-login og admin-styring. Egen SQLite-database - ingen eksterne afhaengigheder."
   author: "andreas"
-  version: 3
+  version: 4
   icon: "app"
 
   docker:
@@ -577,6 +577,26 @@ gameskill:
             }
           }
 
+          /* cover-proxy til eksport med billeder: browseren kan ikke laese cross-origin billeddata (canvas-taint) */
+          if (p === '/api/lookup/cover' && req.method === 'GET') {
+            const COVER_HOSTS = ['covers.openlibrary.org', 'books.google.com', 'fbiinfo-present.dbc.dk'];
+            let target;
+            try { target = new URL(String(u.searchParams.get('url') || '')); } catch (e) { return err(res, 400, 'Ugyldig URL'); }
+            if (target.protocol !== 'https:' && target.protocol !== 'http:') return err(res, 400, 'Ugyldig URL');
+            if (!COVER_HOSTS.includes(target.hostname)) return err(res, 403, 'Ukendt billed-kilde');
+            try {
+              const r = await fetch(target, { signal: AbortSignal.timeout(10000), redirect: 'follow' });
+              const ct = r.headers.get('content-type') || '';
+              if (!r.ok || !ct.startsWith('image/')) return err(res, 404, 'Intet billede');
+              const ab = await r.arrayBuffer();
+              if (ab.byteLength > 3000000) return err(res, 413, 'Billedet er for stort');
+              res.writeHead(200, { 'Content-Type': ct, 'Cache-Control': 'private, max-age=3600' });
+              return res.end(Buffer.from(ab));
+            } catch (e) {
+              return err(res, 502, 'Kunne ikke hente billedet');
+            }
+          }
+
           /* admin */
           if (p.startsWith('/api/admin/')) {
             if (!user.is_admin) return err(res, 403, 'Kræver administrator-rettigheder');
@@ -774,7 +794,6 @@ gameskill:
       .view.active { display: block; }
       .appbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0 12px; }
       .appbar .sub { font-size: 0.8rem; color: var(--muted); }
-      #themeQuick { background: none; border: none; font-size: 1.05rem; padding: 4px 6px; cursor: pointer; line-height: 1; }
       .syncdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: 1px; }
       .syncdot.on { background: var(--good); }
       .syncdot.err { background: var(--danger); }
@@ -783,8 +802,7 @@ gameskill:
       .searchrow { position: relative; margin-bottom: 10px; }
       .searchrow input { padding-left: 38px; border-radius: 12px; }
       .searchrow .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
-      .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
-      .chips::-webkit-scrollbar { display: none; }
+      .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0 10px; }
       .chip {
         flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); color: var(--ink2);
         border-radius: 999px; padding: 6px 13px; font-size: 0.86rem; font-weight: 600; white-space: nowrap;
@@ -927,7 +945,7 @@ gameskill:
       }
       nav button .i { font-size: 1.35rem; line-height: 1.2; }
       nav button.on { color: var(--accent); }
-      #navFold { margin-top: auto; }
+      #navLogout { margin-top: auto; }
       #navUnfold {
         position: fixed; left: 10px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 41;
         width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line);
@@ -1014,10 +1032,7 @@ gameskill:
             <h1>📚 Min Bogreol</h1>
             <div class="sub" id="libCount"></div>
           </div>
-          <div style="display:flex; align-items:center; gap:2px">
-            <button type="button" id="themeQuick" title="Skift mellem lyst og mørkt tema">🌙</button>
-            <div class="sub" id="syncState"></div>
-          </div>
+          <div class="sub" id="syncState"></div>
         </div>
         <div class="searchrow">
           <span class="icon">🔎</span>
@@ -1236,14 +1251,20 @@ gameskill:
             <button type="button" class="chip" data-theme-opt="light">☀️ Lys</button>
             <button type="button" class="chip" data-theme-opt="dark">🌙 Mørk</button>
           </div>
+          <div class="muted" style="margin-top:10px">Øverste linje i boglisten:</div>
+          <div class="chips" id="listTopChips" style="margin-top:6px">
+            <button type="button" class="chip" data-listtop="title">Titel</button>
+            <button type="button" class="chip" data-listtop="author">Forfatter</button>
+          </div>
         </div>
 
         <div class="panel">
           <h2 style="margin-top:0">💾 Sikkerhedskopi</h2>
           <div class="muted">Gem en kopi af hele dit bibliotek som en fil, eller hent en tidligere kopi ind.</div>
-          <button class="btn small" id="btnExport">⬇ Eksportér</button>
-          <button class="btn small sec" id="btnImport" style="background:var(--card); border:1px solid var(--line); color:var(--ink)">⬆ Importér</button>
-          <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+          <button class="btn small" id="btnExport">⬇ Eksportér (JSON med billeder)</button>
+          <button class="btn small" id="btnExportCsv">⬇ Eksportér (CSV)</button>
+          <button class="btn small sec" id="btnImport" style="background:var(--card); border:1px solid var(--line); color:var(--ink)">⬆ Importér (JSON eller CSV)</button>
+          <input type="file" id="importFile" accept=".json,.csv,application/json,text/csv" style="display:none">
         </div>
 
         <div class="panel">
@@ -1266,6 +1287,8 @@ gameskill:
         <button data-view="add"><span class="i">➕</span>Tilføj</button>
         <button data-view="stats"><span class="i">📈</span>Statistik</button>
         <button data-view="more"><span class="i">⚙️</span>Mere</button>
+        <button type="button" id="navLogout" title="Log ud"><span class="i">🚪</span>Log ud</button>
+        <button type="button" id="themeQuick" title="Skift mellem lyst og mørkt tema"><span class="i">🌙</span><span id="themeQuickTxt">Mørk</span></button>
         <button type="button" id="navFold" title="Fold menuen sammen"><span class="i">◀</span>Skjul</button>
       </nav>
       <button type="button" id="navUnfold" title="Vis menuen">☰</button>
@@ -1471,7 +1494,8 @@ gameskill:
         document.querySelectorAll('#themeChips [data-theme-opt]').forEach(b =>
           b.classList.toggle('on', b.dataset.themeOpt === themePref));
         const isDark = themePref === 'dark' || (themePref === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
-        $('themeQuick').textContent = isDark ? '☀️' : '🌙';
+        $('themeQuick').querySelector('.i').textContent = isDark ? '☀️' : '🌙';
+        $('themeQuickTxt').textContent = isDark ? 'Lys' : 'Mørk';
         $('themeQuick').title = isDark ? 'Skift til lyst tema' : 'Skift til mørkt tema';
       }
       $('themeQuick').addEventListener('click', () => {
@@ -1481,6 +1505,23 @@ gameskill:
         applyTheme();
       });
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
+      /* oeverste linje i boglisten: titel eller forfatter (ren UI-praeference) */
+      let listTop = 'title';
+      try { listTop = localStorage.getItem('bogreol_listtop') === 'author' ? 'author' : 'title'; } catch (e) {}
+      function applyListTop() {
+        document.querySelectorAll('#listTopChips [data-listtop]').forEach(b =>
+          b.classList.toggle('on', b.dataset.listtop === listTop));
+        renderList();
+      }
+      $('listTopChips').addEventListener('click', e => {
+        const b = e.target.closest('[data-listtop]');
+        if (!b) return;
+        listTop = b.dataset.listtop;
+        try { localStorage.setItem('bogreol_listtop', listTop); } catch (e2) {}
+        applyListTop();
+      });
+      applyListTop();
       $('themeChips').addEventListener('click', e => {
         const b = e.target.closest('[data-theme-opt]');
         if (!b) return;
@@ -1541,8 +1582,9 @@ gameskill:
           <div class="bookcard" data-id="${b.id}">
             ${coverHtml(b)}
             <div class="bmain">
-              <div class="btitle">${esc(b.title)}</div>
-              <div class="bauthor">${esc((b.authors || []).join(', '))}</div>
+              ${listTop === 'author'
+                ? `<div class="btitle">${esc((b.authors || []).join(', ') || '(ukendt forfatter)')}</div><div class="bauthor">${esc(b.title)}</div>`
+                : `<div class="btitle">${esc(b.title)}</div><div class="bauthor">${esc((b.authors || []).join(', '))}</div>`}
               ${b.series ? `<div class="bseries">Serie: ${esc(b.series)}${b.seriesNo ? ' #' + esc(b.seriesNo) : ''}</div>` : ''}
               ${b.rating ? `<div class="bstars">${'★'.repeat(b.rating)}${'☆'.repeat(5 - b.rating)}</div>` : ''}
               <div class="badges">${badgesHtml(b)}</div>
@@ -2150,24 +2192,118 @@ gameskill:
       }
 
       /* ---------- export / import ---------- */
-      $('btnExport').addEventListener('click', () => {
-        const blob = new Blob([JSON.stringify({ app: 'bogreol', version: 1, exported: nowIso(), books }, null, 1)], { type: 'application/json' });
+      function downloadFile(content, filename, mime) {
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'bogreol-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+        a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+        a.download = filename;
         a.click();
-        toast('Backup hentet 💾');
+      }
+      /* eksterne covers hentes via serverens proxy og indlejres som data-URL, saa backuppen er selvstaendig */
+      async function coverToDataUrl(cover) {
+        if (!cover || cover.startsWith('data:')) return cover;
+        try {
+          const r = await fetch('/api/lookup/cover?url=' + encodeURIComponent(cover));
+          if (!r.ok) return cover;
+          const img = await loadImageFile(await r.blob());
+          const durl = drawScaled(img, 500).toDataURL('image/jpeg', 0.82);
+          return durl.length <= 190000 ? durl : cover;
+        } catch (e) { return cover; }
+      }
+      $('btnExport').addEventListener('click', async () => {
+        const btn = $('btnExport');
+        btn.disabled = true;
+        const out = [];
+        const arr = books.filter(b => !b.deleted);
+        for (let i = 0; i < arr.length; i++) {
+          btn.textContent = `Pakker billeder… (${i + 1}/${arr.length})`;
+          out.push(Object.assign({}, arr[i], { cover: await coverToDataUrl(arr[i].cover) }));
+        }
+        downloadFile(JSON.stringify({ app: 'bogreol', version: 1, exported: nowIso(), books: out }, null, 1),
+          'bogreol-backup-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json');
+        btn.disabled = false;
+        btn.textContent = '⬇ Eksportér (JSON med billeder)';
+        toast('Backup med billeder hentet 💾');
       });
+
+      /* CSV: semikolon-separeret med BOM (dansk Excel), ja/nej-boolske felter */
+      const CSV_HEADERS = ['isbn', 'titel', 'forfattere', 'serie', 'nr_i_serien', 'udgave', 'oplag', 'ejet', 'format', 'laest', 'laest_aar', 'oenskeliste', 'udlaant', 'udlaant_til', 'udlaansdato', 'vurdering', 'noter'];
+      const csvCell = v => {
+        const s = String(v == null ? '' : v);
+        return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      };
+      $('btnExportCsv').addEventListener('click', () => {
+        const rows = books.filter(b => !b.deleted).map(b => [
+          b.isbn, b.title, (b.authors || []).join(', '), b.series, b.seriesNo, b.edition, b.printing,
+          b.owned ? 'ja' : 'nej', b.format, b.read ? 'ja' : 'nej', b.readYear || '', b.wishlist ? 'ja' : 'nej',
+          b.loaned ? 'ja' : 'nej', b.loanedTo, (b.loanedAt || '').slice(0, 10), b.rating || '', b.notes
+        ].map(csvCell).join(';'));
+        downloadFile('\uFEFF' + CSV_HEADERS.join(';') + '\r\n' + rows.join('\r\n'),
+          'bogreol-' + new Date().toISOString().slice(0, 10) + '.csv', 'text/csv;charset=utf-8');
+        toast('CSV hentet 💾');
+      });
+
+      function parseCsv(text) {
+        const out = [[]];
+        let cell = '', inQ = false;
+        text = text.replace(/^\uFEFF/, '');
+        for (let i = 0; i < text.length; i++) {
+          const c = text[i];
+          if (inQ) {
+            if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+            else if (c === '"') inQ = false;
+            else cell += c;
+          } else if (c === '"') inQ = true;
+          else if (c === ';') { out[out.length - 1].push(cell); cell = ''; }
+          else if (c === '\n' || c === '\r') {
+            if (c === '\r' && text[i + 1] === '\n') i++;
+            out[out.length - 1].push(cell); cell = '';
+            out.push([]);
+          } else cell += c;
+        }
+        out[out.length - 1].push(cell);
+        return out.filter(r => r.length > 1 || (r.length === 1 && r[0].trim()));
+      }
+      const csvBool = v => ['ja', 'x', '1', 'true', 'sand'].includes(String(v || '').trim().toLowerCase());
+      function csvToBooks(text) {
+        const rows = parseCsv(text);
+        if (rows.length < 2) throw new Error('CSV er tom');
+        const head = rows[0].map(h => h.trim().toLowerCase());
+        const col = name => { const i = head.indexOf(name); return r => i >= 0 ? (r[i] || '').trim() : ''; };
+        const g = {}; CSV_HEADERS.forEach(h => g[h] = col(h));
+        return rows.slice(1).map(r => {
+          const title = g.titel(r);
+          if (!title) return null;
+          const authors = g.forfattere(r).split(',').map(s => s.trim()).filter(Boolean);
+          const existing = findByIsbn(g.isbn(r)) || findByTitleAuthor(title, authors);
+          return Object.assign({}, existing || {
+            id: uuid(), cover: '', notes: '', rating: 0, addedAt: nowIso(), updatedAt: nowIso(), deleted: false
+          }, {
+            isbn: g.isbn(r), title, authors, series: g.serie(r), seriesNo: g.nr_i_serien(r),
+            edition: g.udgave(r), printing: g.oplag(r),
+            owned: csvBool(g.ejet(r)), format: g.format(r) === 'hardback' ? 'hardback' : 'paperback',
+            read: csvBool(g.laest(r)), readYear: parseInt(g.laest_aar(r), 10) || null,
+            wishlist: csvBool(g.oenskeliste(r)),
+            loaned: csvBool(g.udlaant(r)), loanedTo: g.udlaant_til(r), loanedAt: g.udlaansdato(r) || null,
+            rating: Math.min(5, Math.max(0, parseInt(g.vurdering(r), 10) || 0)), notes: g.noter(r)
+          });
+        }).filter(Boolean);
+      }
       $('btnImport').addEventListener('click', () => $('importFile').click());
       $('importFile').addEventListener('change', e => {
         const f = e.target.files && e.target.files[0];
         if (!f) return;
+        const isCsv = /\.csv$/i.test(f.name);
         const r = new FileReader();
         r.onload = async () => {
           try {
-            const data = JSON.parse(r.result);
-            const arr = Array.isArray(data) ? data : data.books;
-            if (!Array.isArray(arr)) throw new Error('format');
+            let arr;
+            if (isCsv) {
+              arr = csvToBooks(r.result);
+            } else {
+              const data = JSON.parse(r.result);
+              arr = Array.isArray(data) ? data : data.books;
+            }
+            if (!Array.isArray(arr) || !arr.length) throw new Error('format');
             const resp = await api('/api/books/import', { books: arr });
             await loadBooks();
             renderAll();
@@ -2223,11 +2359,13 @@ gameskill:
           toast(d.firstUser ? '🎉 Velkommen! Du er oprettet som administrator.' : '🎉 Velkommen til!');
         } catch (err) { $('regError').textContent = err.message; }
       });
-      $('btnLogout').addEventListener('click', async () => {
+      async function doLogout() {
         try { await api('/api/logout', {}); } catch (e) {}
         books = [];
         showLogin();
-      });
+      }
+      $('btnLogout').addEventListener('click', doLogout);
+      $('navLogout').addEventListener('click', doLogout);
 
       /* ---------- WebAuthn (passkeys) ---------- */
       const bufToB64u = buf => {

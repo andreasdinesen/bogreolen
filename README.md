@@ -25,7 +25,10 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
 - 📚 **Serie-oversigt** — se hele serien, markér hvad du har, og få links til de
   bøger du mangler.
 - 📈 Statistik: læste bøger pr. år, mest læste forfattere, formater.
-- 💾 Eksport/import af hele biblioteket som JSON.
+- 💾 Eksport/import: JSON-backup med indlejrede cover-billeder (kan flyttes til
+  et andet site) eller CSV til hurtig gennemgang i Excel — begge kan importeres
+  igen.
+- 🔤 Vælg selv, om titel eller forfatter står øverst i boglisten.
 - 🎨 Lyst/mørkt tema — følger enheden automatisk, eller vælg selv under »Mere«.
 
 ## Brugere og login
