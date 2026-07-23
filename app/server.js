@@ -307,9 +307,14 @@ function sanitizeBook(b) {
     isbn: s(b.isbn).slice(0, 32),
     title: s(b.title).slice(0, 500),
     authors: Array.isArray(b.authors) ? b.authors.slice(0, 10).map(a => s(a).slice(0, 200)) : [],
-    cover: s(b.cover).slice(0, 200000),
+    cover: String(b.cover == null ? '' : b.cover).slice(0, 200000),
     series: s(b.series).slice(0, 300),
     seriesNo: s(b.seriesNo).slice(0, 10),
+    edition: s(b.edition).slice(0, 100),
+    printing: s(b.printing).slice(0, 100),
+    loaned: !!(b.loaned || b.loanedTo),
+    loanedTo: s(b.loanedTo).slice(0, 200),
+    loanedAt: s(b.loanedAt).slice(0, 40) || null,
     owned: !!b.owned,
     format: ['hardback', 'paperback'].includes(b.format) ? b.format : 'paperback',
     read: !!b.read,
@@ -514,13 +519,19 @@ const server = http.createServer(async (req, res) => {
           headers: { 'Content-Type': 'application/json' },
           signal: AbortSignal.timeout(8000),
           body: JSON.stringify({
-            query: 'query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ cover{ detail } } } } } }',
+            query: 'query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ cover{ detail } identifiers{ type value } } } } } }',
             variables: { q: { all: isbn } }
           })
         });
         const j = await r.json();
         const w = j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
         if (!w) return send(res, 200, { found: false });
+        // fritekst-soegningen kan fuzzy-matche - kraev at vaerkets egne ISBN'er indeholder det efterspurgte
+        const wIsbns = ((w.manifestations && w.manifestations.mostRelevant) || [])
+          .flatMap(m => m.identifiers || [])
+          .filter(i => i.type === 'ISBN')
+          .map(i => String(i.value).replace(/[^0-9Xx]/g, ''));
+        if (!wIsbns.includes(isbn)) return send(res, 200, { found: false });
         const serie = (w.series && w.series[0]) || null;
         const numMatch = serie ? String(serie.numberInSeries || '').match(/\d+/) : null;
         const covers = (w.manifestations && w.manifestations.mostRelevant) || [];

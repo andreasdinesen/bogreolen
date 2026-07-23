@@ -7,6 +7,7 @@
 <meta name="description" content="Hold styr på dine bøger – ejede, læste og ønskede.">
 <meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<script data-theme-init>try{var _t=localStorage.getItem('bogreol_theme');if(_t==='light'||_t==='dark')document.documentElement.dataset.theme=_t}catch(e){}</script>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -40,8 +41,33 @@
   --bar: #2a78d6;
   --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 14px rgba(0,0,0,0.05);
 }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0d0d;
+  --card: #1a1a19;
+  --ink: #ffffff;
+  --ink2: #c3c2b7;
+  --muted: #898781;
+  --line: #2c2c2a;
+  --hairline: rgba(255,255,255,0.10);
+  --accent: #3987e5;
+  --accent-ink: #ffffff;
+  --accent-soft: #16283d;
+  --good: #0ca30c;
+  --good-soft: #12290f;
+  --good-ink: #4fc44f;
+  --read-soft: #16283d;
+  --read-ink: #86b6ef;
+  --wish: #d55181;
+  --wish-soft: #33141f;
+  --warn-soft: #2e2410;
+  --warn-ink: #e5b95c;
+  --danger: #e66767;
+  --bar: #3987e5;
+  --shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #0d0d0d;
     --card: #1a1a19;
@@ -75,8 +101,10 @@ body {
   color: var(--ink);
   font-size: 16px;
   line-height: 1.45;
-  padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  padding-left: 84px;
 }
+body.navfold, body.loggedout { padding-left: 0; }
 h1 { font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; }
 h2 { font-size: 1.05rem; margin: 1.2rem 0 0.5rem; }
 button { font: inherit; cursor: pointer; }
@@ -97,6 +125,7 @@ label { display: block; font-size: 0.82rem; color: var(--ink2); margin: 12px 0 4
 .view.active { display: block; }
 .appbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0 12px; }
 .appbar .sub { font-size: 0.8rem; color: var(--muted); }
+#themeQuick { background: none; border: none; font-size: 1.05rem; padding: 4px 6px; cursor: pointer; line-height: 1; }
 .syncdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: 1px; }
 .syncdot.on { background: var(--good); }
 .syncdot.err { background: var(--danger); }
@@ -114,6 +143,11 @@ label { display: block; font-size: 0.82rem; color: var(--ink2); margin: 12px 0 4
 .chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .chip .n { opacity: 0.75; font-weight: 500; font-size: 0.78rem; }
 .sortrow { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+#compactBtn { white-space: nowrap; }
+#list.compact .cover, #list.compact .bseries, #list.compact .bstars,
+#list.compact .badge.read, #list.compact .badge.unread, #list.compact .badge.loan, #list.compact .badge.wish { display: none; }
+#list.compact .bookcard { padding: 8px 12px; }
+#list.compact .badges { margin-top: 3px; }
 .sortrow select { flex: 1; padding: 8px 10px; font-size: 0.88rem; }
 .sortrow .lbl { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
 
@@ -137,6 +171,7 @@ label { display: block; font-size: 0.82rem; color: var(--ink2); margin: 12px 0 4
 .badge.wish { background: var(--wish-soft); color: var(--wish); }
 .badge.fmt { background: var(--bg); color: var(--ink2); border: 1px solid var(--line); }
 .badge.unread { background: var(--warn-soft); color: var(--warn-ink); }
+.badge.loan { background: var(--warn-soft); color: var(--warn-ink); border: 1px dashed var(--warn-ink); }
 .bstars { color: #eda100; font-size: 0.8rem; margin-top: 3px; letter-spacing: 1px; }
 .empty { text-align: center; color: var(--muted); padding: 40px 20px; }
 .empty .big { font-size: 2.6rem; margin-bottom: 8px; }
@@ -228,22 +263,33 @@ label { display: block; font-size: 0.82rem; color: var(--ink2); margin: 12px 0 4
 .result .rt { font-weight: 700; font-size: 0.9rem; }
 .result .ra { color: var(--ink2); font-size: 0.8rem; }
 
-/* Bottom nav */
+/* Sidemenu (venstre, sammenfoldelig) */
 nav {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
-  background: var(--card); border-top: 1px solid var(--line);
-  display: flex; padding-bottom: env(safe-area-inset-bottom);
+  position: fixed; top: 0; bottom: 0; left: 0; width: 84px; z-index: 40;
+  background: var(--card); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 2px;
+  padding: calc(10px + env(safe-area-inset-top)) 0 calc(10px + env(safe-area-inset-bottom));
+  transition: transform 0.2s ease;
 }
+body.navfold nav { transform: translateX(-100%); }
 nav button {
-  flex: 1; background: none; border: none; padding: 8px 0 6px; color: var(--muted);
+  background: none; border: none; padding: 10px 0 8px; color: var(--muted);
   font-size: 0.68rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 1px;
 }
 nav button .i { font-size: 1.35rem; line-height: 1.2; }
 nav button.on { color: var(--accent); }
+#navFold { margin-top: auto; }
+#navUnfold {
+  position: fixed; left: 10px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 41;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card); color: var(--ink); font-size: 1.15rem; box-shadow: var(--shadow); display: none;
+}
+body.navfold #navUnfold { display: block; }
+body.loggedout #navUnfold { display: none; }
 
 /* Toast */
 #toast {
-  position: fixed; bottom: calc(76px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%) translateY(20px);
+  position: fixed; bottom: calc(18px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%) translateY(20px);
   background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 999px; font-size: 0.88rem; font-weight: 600;
   opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 100; max-width: 90vw; text-align: center;
 }
@@ -319,7 +365,10 @@ body.loggedout nav { display: none; }
       <h1>📚 Min Bogreol</h1>
       <div class="sub" id="libCount"></div>
     </div>
-    <div class="sub" id="syncState"></div>
+    <div style="display:flex; align-items:center; gap:2px">
+      <button type="button" id="themeQuick" title="Skift mellem lyst og mørkt tema">🌙</button>
+      <div class="sub" id="syncState"></div>
+    </div>
   </div>
   <div class="searchrow">
     <span class="icon">🔎</span>
@@ -335,6 +384,7 @@ body.loggedout nav { display: none; }
       <option value="rating">Vurdering (høj–lav)</option>
       <option value="series">Serie</option>
     </select>
+    <button type="button" class="chip" id="compactBtn" title="Kompakt visning – kun titel, forfatter og ejet/format">☰ Kompakt</button>
   </div>
   <div id="list"></div>
 </section>
@@ -402,7 +452,11 @@ body.loggedout nav { display: none; }
   <form id="addForm" style="display:none" autocomplete="off">
     <div id="lookupNote"></div>
     <div style="display:flex; gap:12px; align-items:flex-start">
-      <div class="cover" id="formCover">📕</div>
+      <div style="display:flex; flex-direction:column; gap:6px; align-items:center">
+        <div class="cover" id="formCover">📕</div>
+        <button type="button" class="btn small sec" id="fCoverUpload" style="margin:0; padding:5px 8px; font-size:0.72rem">📷 Billede</button>
+        <input type="file" id="fCoverFile" accept="image/*" style="display:none">
+      </div>
       <div style="flex:1">
         <label style="margin-top:0">Titel *</label>
         <input type="text" id="fTitle" required>
@@ -420,6 +474,16 @@ body.loggedout nav { display: none; }
       <div style="flex:1">
         <label>Nr. i serien</label>
         <input type="text" id="fSeriesNo" inputmode="numeric" placeholder="fx 3">
+      </div>
+    </div>
+    <div style="display:flex; gap:10px">
+      <div style="flex:1">
+        <label>Udgave</label>
+        <input type="text" id="fEdition" placeholder="fx 1. udgave">
+      </div>
+      <div style="flex:1">
+        <label>Oplag</label>
+        <input type="text" id="fPrinting" placeholder="fx 3. oplag">
       </div>
     </div>
 
@@ -516,6 +580,16 @@ body.loggedout nav { display: none; }
   </div>
 
   <div class="panel">
+    <h2 style="margin-top:0">🎨 Udseende</h2>
+    <div class="muted">»Auto« følger enhedens lys/mørk-indstilling.</div>
+    <div class="chips" id="themeChips" style="margin-top:8px">
+      <button type="button" class="chip" data-theme-opt="auto">Auto</button>
+      <button type="button" class="chip" data-theme-opt="light">☀️ Lys</button>
+      <button type="button" class="chip" data-theme-opt="dark">🌙 Mørk</button>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2 style="margin-top:0">💾 Sikkerhedskopi</h2>
     <div class="muted">Gem en kopi af hele dit bibliotek som en fil, eller hent en tidligere kopi ind.</div>
     <button class="btn small" id="btnExport">⬇ Eksportér</button>
@@ -543,7 +617,9 @@ body.loggedout nav { display: none; }
   <button data-view="add"><span class="i">➕</span>Tilføj</button>
   <button data-view="stats"><span class="i">📈</span>Statistik</button>
   <button data-view="more"><span class="i">⚙️</span>Mere</button>
+  <button type="button" id="navFold" title="Fold menuen sammen"><span class="i">◀</span>Skjul</button>
 </nav>
+<button type="button" id="navUnfold" title="Vis menuen">☰</button>
 
 <div id="toast"></div>
 <script>
@@ -636,6 +712,7 @@ function markDirty() { renderAll(); }
 function addBook(data) {
   const b = Object.assign({
     id: uuid(), isbn: '', title: '', authors: [], cover: '', series: '', seriesNo: '',
+    edition: '', printing: '', loaned: false, loanedTo: '', loanedAt: null,
     owned: false, format: 'paperback', read: false, readYear: null, wishlist: false,
     rating: 0, notes: '', addedAt: nowIso(), updatedAt: nowIso(), deleted: false
   }, data);
@@ -662,7 +739,23 @@ function showView(name) {
   if (name === 'stats') { renderStats(); }
   window.scrollTo(0, 0);
 }
-document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+document.querySelectorAll('nav button[data-view]').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+
+/* sammenfoldelig sidemenu (ren UI-praeference, gemmes i localStorage) */
+let navFolded = false;
+try { navFolded = localStorage.getItem('bogreol_nav') === '1'; } catch (e) {}
+function applyNav() { document.body.classList.toggle('navfold', navFolded); }
+$('navFold').addEventListener('click', () => {
+  navFolded = true;
+  try { localStorage.setItem('bogreol_nav', '1'); } catch (e) {}
+  applyNav();
+});
+$('navUnfold').addEventListener('click', () => {
+  navFolded = false;
+  try { localStorage.setItem('bogreol_nav', '0'); } catch (e) {}
+  applyNav();
+});
+applyNav();
 
 function showAddSub(which) {
   ['addMenu', 'scanBox', 'photoBox', 'searchBox', 'existsBox', 'addForm'].forEach(id => {
@@ -682,7 +775,8 @@ const CHIPS = [
   { id: 'readnotowned', label: 'Læst · ikke købt', f: b => b.read && !b.owned },
   { id: 'wish', label: 'Ønskeliste', f: b => b.wishlist },
   { id: 'hardback', label: '📕 Hardback', f: b => b.owned && b.format === 'hardback' },
-  { id: 'paperback', label: '📖 Paperback', f: b => b.owned && b.format === 'paperback' }
+  { id: 'paperback', label: '📖 Paperback', f: b => b.owned && b.format === 'paperback' },
+  { id: 'loaned', label: '🤝 Udlånt', f: b => !!b.loaned }
 ];
 function renderChips() {
   const arr = alive();
@@ -699,6 +793,54 @@ $('chips').addEventListener('click', e => {
 $('q').addEventListener('input', renderList);
 $('sort').addEventListener('change', renderList);
 
+/* kompakt visning (ren UI-praeference, gemmes i localStorage) */
+let compact = false;
+try { compact = localStorage.getItem('bogreol_compact') === '1'; } catch (e) {}
+function applyCompact() {
+  $('list').classList.toggle('compact', compact);
+  $('compactBtn').classList.toggle('on', compact);
+}
+$('compactBtn').addEventListener('click', () => {
+  compact = !compact;
+  try { localStorage.setItem('bogreol_compact', compact ? '1' : '0'); } catch (e) {}
+  applyCompact();
+});
+applyCompact();
+
+/* tema-valg (ren UI-praeference, gemmes i localStorage; head-scriptet anvender den foer foerste paint) */
+let themePref = 'auto';
+try { themePref = localStorage.getItem('bogreol_theme') || 'auto'; } catch (e) {}
+if (themePref !== 'light' && themePref !== 'dark') themePref = 'auto';
+function applyTheme() {
+  if (themePref === 'auto') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = themePref;
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => {
+    m.content = themePref === 'auto'
+      ? (m.media.includes('light') ? '#f9f9f7' : '#0d0d0d')
+      : (themePref === 'light' ? '#f9f9f7' : '#0d0d0d');
+  });
+  document.querySelectorAll('#themeChips [data-theme-opt]').forEach(b =>
+    b.classList.toggle('on', b.dataset.themeOpt === themePref));
+  const isDark = themePref === 'dark' || (themePref === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  $('themeQuick').textContent = isDark ? '☀️' : '🌙';
+  $('themeQuick').title = isDark ? 'Skift til lyst tema' : 'Skift til mørkt tema';
+}
+$('themeQuick').addEventListener('click', () => {
+  const isDark = themePref === 'dark' || (themePref === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  themePref = isDark ? 'light' : 'dark';
+  try { localStorage.setItem('bogreol_theme', themePref); } catch (e) {}
+  applyTheme();
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+$('themeChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-theme-opt]');
+  if (!b) return;
+  themePref = b.dataset.themeOpt;
+  try { localStorage.setItem('bogreol_theme', themePref); } catch (e2) {}
+  applyTheme();
+});
+applyTheme();
+
 function coverHtml(b, cls) {
   const fallback = ['📕', '📗', '📘', '📙'][ (norm(b.title).length + (b.title||'').length) % 4 ];
   if (b.cover) return `<div class="cover ${cls || ''}"><img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.parentNode.innerHTML='${fallback}'"></div>`;
@@ -709,6 +851,7 @@ function badgesHtml(b) {
   let h = '';
   if (b.owned) h += `<span class="badge owned">Ejet</span>`;
   if (b.owned && b.format) h += `<span class="badge fmt">${fmtIcon[b.format] || esc(b.format)}</span>`;
+  if (b.loaned) h += `<span class="badge loan">🤝 Udlånt${b.loanedTo ? ' til ' + esc(b.loanedTo) : ''}</span>`;
   if (b.read) h += `<span class="badge read">Læst${b.readYear ? ' ' + b.readYear : ''}</span>`;
   if (b.owned && !b.read) h += `<span class="badge unread">Ulæst</span>`;
   if (b.read && !b.owned) h += `<span class="badge fmt">Ikke købt</span>`;
@@ -792,6 +935,8 @@ function openForm(prefill, editId) {
   $('fIsbn').value = p.isbn || '';
   $('fSeries').value = p.series || '';
   $('fSeriesNo').value = p.seriesNo || '';
+  $('fEdition').value = p.edition || '';
+  $('fPrinting').value = p.printing || '';
   $('fOwned').checked = !!p.owned;
   $('fFormat').value = p.format === 'hardback' ? 'hardback' : 'paperback';
   $('fRead').checked = !!p.read;
@@ -811,6 +956,43 @@ function syncFormRows() {
   $('fmtRow').style.display = $('fOwned').checked ? 'flex' : 'none';
   $('yearRow').style.display = $('fRead').checked ? 'flex' : 'none';
 }
+/* ISBN indtastet i formularen -> slaa op og udfyld tomme felter (inkl. cover) */
+$('fIsbn').addEventListener('change', async () => {
+  const isbn = normIsbn($('fIsbn').value);
+  if (!isbn) return;
+  if ($('fTitle').value.trim() && $('fCoverUrl').value) return;
+  $('lookupNote').innerHTML = `<div class="notice info"><span class="spin"></span> Slår ISBN ${esc(isbn)} op…</div>`;
+  const info = await lookupIsbn(isbn);
+  if (!$('fTitle').value.trim() && info.title) $('fTitle').value = info.title;
+  if (!$('fAuthors').value.trim() && info.authors.length) $('fAuthors').value = info.authors.join(', ');
+  if (!$('fSeries').value.trim() && info.series) {
+    $('fSeries').value = info.series;
+    if (!$('fSeriesNo').value) $('fSeriesNo').value = info.seriesNo || '';
+  }
+  if (!$('fCoverUrl').value && info.cover) {
+    $('fCoverUrl').value = info.cover;
+    $('formCover').innerHTML = `<img src="${esc(info.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">`;
+  }
+  $('lookupNote').innerHTML = info.title
+    ? `<div class="notice ok">✔ Oplysninger hentet fra bogdatabasen – tomme felter er udfyldt.</div>`
+    : `<div class="notice warn">Bogen blev ikke fundet i bogdatabaserne – udfyld selv felterne (og upload evt. eget billede).</div>`;
+});
+
+/* upload eget cover-billede (skaleres ned og gemmes som data-URL) */
+$('fCoverUpload').addEventListener('click', () => $('fCoverFile').click());
+$('fCoverFile').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const img = await loadImageFile(file);
+    const url = drawScaled(img, 500).toDataURL('image/jpeg', 0.82);
+    if (url.length > 190000) { toast('Billedet fylder for meget – prøv et mindre'); return; }
+    $('fCoverUrl').value = url;
+    $('formCover').innerHTML = `<img src="${url}" alt="">`;
+  } catch (err) { toast('Kunne ikke læse billedet'); }
+});
+
 $('fOwned').addEventListener('change', syncFormRows);
 $('fRead').addEventListener('change', () => {
   if ($('fRead').checked && !$('fReadYear').value) $('fReadYear').value = new Date().getFullYear();
@@ -825,6 +1007,8 @@ $('addForm').addEventListener('submit', e => {
     isbn: $('fIsbn').value.trim(),
     series: $('fSeries').value.trim(),
     seriesNo: $('fSeriesNo').value.trim(),
+    edition: $('fEdition').value.trim(),
+    printing: $('fPrinting').value.trim(),
     owned: $('fOwned').checked,
     format: $('fFormat').value,
     read: $('fRead').checked,
@@ -1102,6 +1286,7 @@ function openDetail(id) {
         <div class="bauthor">${esc((b.authors || []).join(', '))}</div>
         ${b.series ? `<div class="bseries">Serie: ${esc(b.series)}${b.seriesNo ? ' #' + esc(b.seriesNo) : ''}</div>` : ''}
         ${b.isbn ? `<div class="muted" style="font-size:0.75rem; margin-top:3px">ISBN ${esc(b.isbn)}</div>` : ''}
+        ${b.edition || b.printing ? `<div class="muted" style="font-size:0.75rem; margin-top:2px">${esc([b.edition, b.printing].filter(Boolean).join(' · '))}</div>` : ''}
         <div class="badges" id="dBadges">${badgesHtml(b)}</div>
       </div>
     </div>
@@ -1116,6 +1301,18 @@ function openDetail(id) {
           <option value="hardback" ${b.format === 'hardback' ? 'selected' : ''}>📕 Hardback</option>
           <option value="paperback" ${b.format !== 'hardback' ? 'selected' : ''}>📖 Paperback</option>
         </select>
+      </div>
+      <div class="togglerow" id="dLoanRow" style="${b.owned ? '' : 'display:none'}">
+        <div><div class="tl">Udlånt</div><div class="td">Er bogen lånt ud?</div></div>
+        <span class="switch"><input type="checkbox" id="dLoaned" ${b.loaned ? 'checked' : ''}><span class="track"></span></span>
+      </div>
+      <div class="togglerow" id="dLoanWhoRow" style="${b.owned && b.loaned ? '' : 'display:none'}">
+        <div class="tl">Udlånt til</div>
+        <input type="text" id="dLoanedTo" style="width:45%" placeholder="fx mor" value="${esc(b.loanedTo || '')}">
+      </div>
+      <div class="togglerow" id="dLoanDateRow" style="${b.owned && b.loaned ? '' : 'display:none'}">
+        <div class="tl">Udlånsdato</div>
+        <input type="date" id="dLoanedAt" style="width:auto" value="${esc(String(b.loanedAt || '').slice(0, 10))}">
       </div>
       <div class="togglerow">
         <div><div class="tl">Jeg har læst den</div></div>
@@ -1134,6 +1331,17 @@ function openDetail(id) {
     <div class="starinput" id="dStars"></div>
     <label>Noter</label>
     <textarea id="dNotes" rows="3">${esc(b.notes || '')}</textarea>
+    ${(() => {
+      if (!b.series) return '';
+      const inSeries = alive().filter(x => norm(x.series) === norm(b.series))
+        .sort((x, y) => (parseInt(x.seriesNo, 10) || 999) - (parseInt(y.seriesNo, 10) || 999));
+      if (inSeries.length < 2) return '';
+      return `<div class="panel" style="margin-top:10px"><b style="font-size:0.9rem">I dit bibliotek: ${inSeries.length} bøger i serien »${esc(b.series)}«</b>
+        ${inSeries.map(x => `<div class="serieitem" data-book="${x.id}" style="cursor:pointer">
+          <div class="st">${x.seriesNo ? '#' + esc(x.seriesNo) + ' ' : ''}${esc(x.title)}${x.id === b.id ? ' <span class="sy">← denne</span>' : ''}</div>
+          <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end">${badgesHtml(x)}</div>
+        </div>`).join('')}</div>`;
+    })()}
     ${b.series ? `<button class="btn sec" id="dSeries">🔗 Se serien »${esc(b.series)}« – find de bøger du mangler</button><div id="dSeriesBox"></div>` : ''}
     <button class="btn sec" id="dEdit">✏️ Redigér oplysninger</button>
     <button class="btn danger" id="dDelete">Slet bogen</button>
@@ -1141,11 +1349,32 @@ function openDetail(id) {
   $('overlay').classList.add('open');
 
   const refresh = () => { $('dBadges').innerHTML = badgesHtml(books.find(x => x.id === id)); };
+  const syncLoanRows = () => {
+    const show = $('dOwned').checked && $('dLoaned').checked ? 'flex' : 'none';
+    $('dLoanRow').style.display = $('dOwned').checked ? 'flex' : 'none';
+    $('dLoanWhoRow').style.display = show;
+    $('dLoanDateRow').style.display = show;
+  };
   $('dOwned').addEventListener('change', e => {
     $('dFmtRow').style.display = e.target.checked ? 'flex' : 'none';
+    syncLoanRows();
     updateBook(id, { owned: e.target.checked }); refresh();
   });
   $('dFormat').addEventListener('change', e => { updateBook(id, { format: e.target.value }); refresh(); });
+  $('dLoaned').addEventListener('change', e => {
+    if (e.target.checked && !$('dLoanedAt').value) $('dLoanedAt').value = new Date().toISOString().slice(0, 10);
+    const on = e.target.checked;
+    syncLoanRows();
+    updateBook(id, on ? { loaned: true, loanedAt: $('dLoanedAt').value } : { loaned: false, loanedTo: '', loanedAt: null });
+    if (!on) $('dLoanedTo').value = '';
+    refresh();
+  });
+  let loanT = null;
+  $('dLoanedTo').addEventListener('input', e => {
+    clearTimeout(loanT);
+    loanT = setTimeout(() => { updateBook(id, { loanedTo: e.target.value.trim() }); refresh(); }, 600);
+  });
+  $('dLoanedAt').addEventListener('change', e => updateBook(id, { loanedAt: e.target.value || null }));
   $('dRead').addEventListener('change', e => {
     const yr = e.target.checked ? (parseInt($('dReadYear').value, 10) || new Date().getFullYear()) : null;
     $('dYearRow').style.display = e.target.checked ? 'flex' : 'none';
@@ -1161,6 +1390,9 @@ function openDetail(id) {
     notesT = setTimeout(() => updateBook(id, { notes: e.target.value.trim() }), 600);
   });
   if (b.series) $('dSeries').addEventListener('click', () => seriesExplore(b, $('dSeriesBox')));
+  sheet.querySelectorAll('[data-book]').forEach(el => el.addEventListener('click', () => {
+    if (el.dataset.book !== id) openDetail(el.dataset.book);
+  }));
   $('dEdit').addEventListener('click', () => { closeSheet(); openForm(b, b.id); });
   $('dDelete').addEventListener('click', e => {
     if (e.target.dataset.armed) {

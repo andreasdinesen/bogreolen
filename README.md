@@ -13,15 +13,20 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
 - 🖼️ **Foto af forsiden** — tekstgenkendelse finder bogen ud fra titlen.
 - 🇩🇰 Bogopslag via **bibliotek.dk** (danske bøger inkl. serier), Google Books og
   Open Library.
-- ⌨️ Manuel indtastning og fritekst-søgning i bogdatabasen.
+- ⌨️ Manuel indtastning og fritekst-søgning i bogdatabasen — indtaster du et
+  ISBN, hentes cover og manglende oplysninger automatisk.
+- 🖼️ Upload dit eget cover-billede, hvis bogen ikke findes i databaserne.
 - 🔎 Hurtige filtre og sortering: forfatter, titel, serie, vurdering — ejet, læst,
   *læst men ikke købt*, ulæst, ønskeliste, hardback, paperback.
-- 📖 Pr. bog: købt/ej, format (hardback/paperback), læst (med årstal), stjerner,
-  noter.
+- 📖 Pr. bog: købt/ej, format (hardback/paperback), udgave og oplag, læst (med
+  årstal), stjerner, noter.
+- 🤝 Hold styr på udlån: skriv hvem bogen er lånt ud til — dato gemmes, og bogen
+  får et »Udlånt«-badge og eget filter.
 - 📚 **Serie-oversigt** — se hele serien, markér hvad du har, og få links til de
   bøger du mangler.
 - 📈 Statistik: læste bøger pr. år, mest læste forfattere, formater.
 - 💾 Eksport/import af hele biblioteket som JSON.
+- 🎨 Lyst/mørkt tema — følger enheden automatisk, eller vælg selv under »Mere«.
 
 ## Brugere og login
 

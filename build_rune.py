@@ -66,7 +66,7 @@ gameskill:
   category: "Apps"
   description: "Personligt bogbibliotek: scan ISBN, hold styr paa koebte/laeste boeger og oenskeliste. Flere brugere, passkey-login og admin-styring. Egen SQLite-database - ingen eksterne afhaengigheder."
   author: "andreas"
-  version: 2
+  version: 3
   icon: "app"
 
   docker:
