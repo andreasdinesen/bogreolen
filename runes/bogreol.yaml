@@ -6,7 +6,7 @@ gameskill:
   category: "Apps"
   description: "Personligt bogbibliotek: scan ISBN, hold styr paa koebte/laeste boeger og oenskeliste. Flere brugere, passkey-login og admin-styring. Egen SQLite-database - ingen eksterne afhaengigheder."
   author: "andreas"
-  version: 1
+  version: 2
   icon: "app"
 
   docker:
@@ -339,7 +339,7 @@ gameskill:
           series: s(b.series).slice(0, 300),
           seriesNo: s(b.seriesNo).slice(0, 10),
           owned: !!b.owned,
-          format: ['fysisk', 'ebog', 'lydbog'].includes(b.format) ? b.format : 'fysisk',
+          format: ['hardback', 'paperback'].includes(b.format) ? b.format : 'paperback',
           read: !!b.read,
           readYear: Number.isInteger(b.readYear) ? b.readYear : null,
           wishlist: !!b.wishlist,
@@ -530,6 +530,40 @@ gameskill:
               n++;
             }
             return send(res, 200, { imported: n });
+          }
+
+          /* bogopslag via bibliotek.dk (danske boeger) - API'et sender ingen CORS-headers, saa serveren proxyer */
+          if (p.startsWith('/api/lookup/isbn/') && req.method === 'GET') {
+            const isbn = decodeURIComponent(p.slice('/api/lookup/isbn/'.length)).replace(/[^0-9Xx]/g, '');
+            if (isbn.length !== 10 && isbn.length !== 13) return err(res, 400, 'Ugyldigt ISBN');
+            try {
+              const r = await fetch('https://bibliotek.dk/api/SimpleSearch/graphql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: AbortSignal.timeout(8000),
+                body: JSON.stringify({
+                  query: 'query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ cover{ detail } } } } } }',
+                  variables: { q: { all: isbn } }
+                })
+              });
+              const j = await r.json();
+              const w = j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
+              if (!w) return send(res, 200, { found: false });
+              const serie = (w.series && w.series[0]) || null;
+              const numMatch = serie ? String(serie.numberInSeries || '').match(/\d+/) : null;
+              const covers = (w.manifestations && w.manifestations.mostRelevant) || [];
+              const cover = covers.find(m => m.cover && m.cover.detail);
+              return send(res, 200, {
+                found: true,
+                title: (w.titles && w.titles.full && w.titles.full[0]) || '',
+                authors: (w.creators || []).map(c => c.display).filter(Boolean),
+                series: (serie && serie.title) || '',
+                seriesNo: numMatch ? numMatch[0] : '',
+                cover: (cover && cover.cover.detail) || ''
+              });
+            } catch (e) {
+              return send(res, 200, { found: false });
+            }
           }
 
           /* admin */
@@ -1035,9 +1069,8 @@ gameskill:
             <div class="togglerow" id="fmtRow" style="display:none">
               <div class="tl">Format</div>
               <select id="fFormat" style="width:auto">
-                <option value="fysisk">📖 Fysisk (hardcopy)</option>
-                <option value="ebog">📱 E-bog</option>
-                <option value="lydbog">🎧 Lydbog</option>
+                <option value="hardback">📕 Hardback</option>
+                <option value="paperback">📖 Paperback</option>
               </select>
             </div>
             <div class="togglerow">
@@ -1241,7 +1274,7 @@ gameskill:
       function addBook(data) {
         const b = Object.assign({
           id: uuid(), isbn: '', title: '', authors: [], cover: '', series: '', seriesNo: '',
-          owned: false, format: 'fysisk', read: false, readYear: null, wishlist: false,
+          owned: false, format: 'paperback', read: false, readYear: null, wishlist: false,
           rating: 0, notes: '', addedAt: nowIso(), updatedAt: nowIso(), deleted: false
         }, data);
         books.push(b);
@@ -1286,7 +1319,8 @@ gameskill:
         { id: 'unread', label: 'Ulæst (ejet)', f: b => b.owned && !b.read },
         { id: 'readnotowned', label: 'Læst · ikke købt', f: b => b.read && !b.owned },
         { id: 'wish', label: 'Ønskeliste', f: b => b.wishlist },
-        { id: 'fysisk', label: '📖 Hardcopy', f: b => b.owned && b.format === 'fysisk' }
+        { id: 'hardback', label: '📕 Hardback', f: b => b.owned && b.format === 'hardback' },
+        { id: 'paperback', label: '📖 Paperback', f: b => b.owned && b.format === 'paperback' }
       ];
       function renderChips() {
         const arr = alive();
@@ -1309,7 +1343,7 @@ gameskill:
         return `<div class="cover ${cls || ''}">${fallback}</div>`;
       }
       function badgesHtml(b) {
-        const fmtIcon = { fysisk: '📖 Fysisk', ebog: '📱 E-bog', lydbog: '🎧 Lydbog' };
+        const fmtIcon = { hardback: '📕 Hardback', paperback: '📖 Paperback' };
         let h = '';
         if (b.owned) h += `<span class="badge owned">Ejet</span>`;
         if (b.owned && b.format) h += `<span class="badge fmt">${fmtIcon[b.format] || esc(b.format)}</span>`;
@@ -1397,7 +1431,7 @@ gameskill:
         $('fSeries').value = p.series || '';
         $('fSeriesNo').value = p.seriesNo || '';
         $('fOwned').checked = !!p.owned;
-        $('fFormat').value = p.format || 'fysisk';
+        $('fFormat').value = p.format === 'hardback' ? 'hardback' : 'paperback';
         $('fRead').checked = !!p.read;
         $('fReadYear').value = p.readYear || '';
         $('fWish').checked = !!p.wishlist;
@@ -1460,24 +1494,41 @@ gameskill:
       $('btnManual').addEventListener('click', () => openForm({ owned: true }));
 
       /* ---------- ISBN lookup ---------- */
-      async function lookupIsbn(isbn) {
-        const out = { isbn, title: '', authors: [], cover: '', series: '', seriesNo: '' };
+      async function lookupBibliotekDk(isbn, out) {
+        try {
+          const d = await fetchJson('/api/lookup/isbn/' + encodeURIComponent(isbn));
+          if (!d.found) return;
+          if (!out.title && d.title) out.title = d.title;
+          if (!out.authors.length && d.authors && d.authors.length) out.authors = d.authors;
+          if (!out.series && d.series) { out.series = d.series; out.seriesNo = d.seriesNo || ''; }
+          if (!out.cover && d.cover) out.cover = d.cover;
+        } catch (e) {}
+      }
+      async function lookupGoogle(isbn, out) {
         try {
           const g = await fetchJson('https://www.googleapis.com/books/v1/volumes?q=isbn:' + encodeURIComponent(isbn));
           if (g.totalItems > 0 && g.items && g.items[0].volumeInfo) {
             const v = g.items[0].volumeInfo;
-            out.title = v.title || '';
-            if (v.subtitle && out.title && !out.title.includes(v.subtitle)) out.title += ' – ' + v.subtitle;
-            out.authors = v.authors || [];
-            if (v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail)) {
+            if (!out.title && v.title) {
+              out.title = v.title;
+              if (v.subtitle && !out.title.includes(v.subtitle)) out.title += ' – ' + v.subtitle;
+            }
+            if (!out.authors.length) out.authors = v.authors || [];
+            if (!out.cover && v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail)) {
               out.cover = (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail).replace(/^http:/, 'https:');
             }
           }
         } catch (e) {}
-        try {
+      }
+      async function lookupIsbn(isbn) {
+        const out = { isbn, title: '', authors: [], cover: '', series: '', seriesNo: '' };
+        const danish = /^(97[89])?87/.test(isbn);
+        if (danish) { await lookupBibliotekDk(isbn, out); await lookupGoogle(isbn, out); }
+        else { await lookupGoogle(isbn, out); await lookupBibliotekDk(isbn, out); }
+        if (!out.title || !out.series || !out.authors.length) try {
           const ed = await fetchJson('https://openlibrary.org/isbn/' + encodeURIComponent(isbn) + '.json');
           if (!out.title && ed.title) out.title = ed.title;
-          if (ed.series && ed.series.length) {
+          if (!out.series && ed.series && ed.series.length) {
             let s = String(ed.series[0]);
             const m = s.match(/(.*?)[,;]?\s*(?:#|bd\.?|bind|book|no\.?|vol\.?)\s*(\d+)\s*\.?$/i);
             if (m) { out.series = m[1].trim().replace(/[;,]$/, ''); out.seriesNo = m[2]; }
@@ -1509,7 +1560,7 @@ gameskill:
       function showExists(b) {
         showView('add'); showAddSub('exists');
         const status = [
-          b.owned ? '✅ Du <b>ejer</b> den' + (b.format ? ' (' + ({fysisk:'fysisk',ebog:'e-bog',lydbog:'lydbog'}[b.format]||b.format) + ')' : '') : '❌ Du ejer den ikke',
+          b.owned ? '✅ Du <b>ejer</b> den' + (b.format ? ' (' + ({hardback:'hardback',paperback:'paperback'}[b.format]||esc(b.format)) + ')' : '') : '❌ Du ejer den ikke',
           b.read ? '✅ Du har <b>læst</b> den' + (b.readYear ? ' i ' + b.readYear : '') : '📖 Du har ikke læst den endnu',
           b.wishlist ? '♡ Den står på din ønskeliste' : ''
         ].filter(Boolean).join('<br>');
@@ -1700,9 +1751,8 @@ gameskill:
             <div class="togglerow" id="dFmtRow" style="${b.owned ? '' : 'display:none'}">
               <div class="tl">Format</div>
               <select id="dFormat" style="width:auto">
-                <option value="fysisk" ${b.format === 'fysisk' ? 'selected' : ''}>📖 Fysisk (hardcopy)</option>
-                <option value="ebog" ${b.format === 'ebog' ? 'selected' : ''}>📱 E-bog</option>
-                <option value="lydbog" ${b.format === 'lydbog' ? 'selected' : ''}>🎧 Lydbog</option>
+                <option value="hardback" ${b.format === 'hardback' ? 'selected' : ''}>📕 Hardback</option>
+                <option value="paperback" ${b.format !== 'hardback' ? 'selected' : ''}>📖 Paperback</option>
               </select>
             </div>
             <div class="togglerow">
@@ -1850,7 +1900,7 @@ gameskill:
         const authors = Object.entries(byAuthor).sort((a, b2) => b2[1] - a[1]).slice(0, 8);
         $('chartAuthors').innerHTML = authors.length ? barRows(authors) : '<div class="muted">Markér bøger som læst for at se statistikken</div>';
 
-        const fmtName = { fysisk: '📖 Fysisk', ebog: '📱 E-bog', lydbog: '🎧 Lydbog' };
+        const fmtName = { hardback: '📕 Hardback', paperback: '📖 Paperback' };
         const byFmt = {};
         arr.filter(b => b.owned).forEach(b => { const k = fmtName[b.format] || 'Andet'; byFmt[k] = (byFmt[k] || 0) + 1; });
         $('chartFormats').innerHTML = barRows(Object.entries(byFmt).sort((a, b2) => b2[1] - a[1]));

@@ -431,9 +431,8 @@ body.loggedout nav { display: none; }
       <div class="togglerow" id="fmtRow" style="display:none">
         <div class="tl">Format</div>
         <select id="fFormat" style="width:auto">
-          <option value="fysisk">📖 Fysisk (hardcopy)</option>
-          <option value="ebog">📱 E-bog</option>
-          <option value="lydbog">🎧 Lydbog</option>
+          <option value="hardback">📕 Hardback</option>
+          <option value="paperback">📖 Paperback</option>
         </select>
       </div>
       <div class="togglerow">
@@ -637,7 +636,7 @@ function markDirty() { renderAll(); }
 function addBook(data) {
   const b = Object.assign({
     id: uuid(), isbn: '', title: '', authors: [], cover: '', series: '', seriesNo: '',
-    owned: false, format: 'fysisk', read: false, readYear: null, wishlist: false,
+    owned: false, format: 'paperback', read: false, readYear: null, wishlist: false,
     rating: 0, notes: '', addedAt: nowIso(), updatedAt: nowIso(), deleted: false
   }, data);
   books.push(b);
@@ -682,7 +681,8 @@ const CHIPS = [
   { id: 'unread', label: 'Ulæst (ejet)', f: b => b.owned && !b.read },
   { id: 'readnotowned', label: 'Læst · ikke købt', f: b => b.read && !b.owned },
   { id: 'wish', label: 'Ønskeliste', f: b => b.wishlist },
-  { id: 'fysisk', label: '📖 Hardcopy', f: b => b.owned && b.format === 'fysisk' }
+  { id: 'hardback', label: '📕 Hardback', f: b => b.owned && b.format === 'hardback' },
+  { id: 'paperback', label: '📖 Paperback', f: b => b.owned && b.format === 'paperback' }
 ];
 function renderChips() {
   const arr = alive();
@@ -705,7 +705,7 @@ function coverHtml(b, cls) {
   return `<div class="cover ${cls || ''}">${fallback}</div>`;
 }
 function badgesHtml(b) {
-  const fmtIcon = { fysisk: '📖 Fysisk', ebog: '📱 E-bog', lydbog: '🎧 Lydbog' };
+  const fmtIcon = { hardback: '📕 Hardback', paperback: '📖 Paperback' };
   let h = '';
   if (b.owned) h += `<span class="badge owned">Ejet</span>`;
   if (b.owned && b.format) h += `<span class="badge fmt">${fmtIcon[b.format] || esc(b.format)}</span>`;
@@ -793,7 +793,7 @@ function openForm(prefill, editId) {
   $('fSeries').value = p.series || '';
   $('fSeriesNo').value = p.seriesNo || '';
   $('fOwned').checked = !!p.owned;
-  $('fFormat').value = p.format || 'fysisk';
+  $('fFormat').value = p.format === 'hardback' ? 'hardback' : 'paperback';
   $('fRead').checked = !!p.read;
   $('fReadYear').value = p.readYear || '';
   $('fWish').checked = !!p.wishlist;
@@ -856,24 +856,41 @@ $('formCancel').addEventListener('click', () => { pendingPhotoCover = ''; showAd
 $('btnManual').addEventListener('click', () => openForm({ owned: true }));
 
 /* ---------- ISBN lookup ---------- */
-async function lookupIsbn(isbn) {
-  const out = { isbn, title: '', authors: [], cover: '', series: '', seriesNo: '' };
+async function lookupBibliotekDk(isbn, out) {
+  try {
+    const d = await fetchJson('/api/lookup/isbn/' + encodeURIComponent(isbn));
+    if (!d.found) return;
+    if (!out.title && d.title) out.title = d.title;
+    if (!out.authors.length && d.authors && d.authors.length) out.authors = d.authors;
+    if (!out.series && d.series) { out.series = d.series; out.seriesNo = d.seriesNo || ''; }
+    if (!out.cover && d.cover) out.cover = d.cover;
+  } catch (e) {}
+}
+async function lookupGoogle(isbn, out) {
   try {
     const g = await fetchJson('https://www.googleapis.com/books/v1/volumes?q=isbn:' + encodeURIComponent(isbn));
     if (g.totalItems > 0 && g.items && g.items[0].volumeInfo) {
       const v = g.items[0].volumeInfo;
-      out.title = v.title || '';
-      if (v.subtitle && out.title && !out.title.includes(v.subtitle)) out.title += ' – ' + v.subtitle;
-      out.authors = v.authors || [];
-      if (v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail)) {
+      if (!out.title && v.title) {
+        out.title = v.title;
+        if (v.subtitle && !out.title.includes(v.subtitle)) out.title += ' – ' + v.subtitle;
+      }
+      if (!out.authors.length) out.authors = v.authors || [];
+      if (!out.cover && v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail)) {
         out.cover = (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail).replace(/^http:/, 'https:');
       }
     }
   } catch (e) {}
-  try {
+}
+async function lookupIsbn(isbn) {
+  const out = { isbn, title: '', authors: [], cover: '', series: '', seriesNo: '' };
+  const danish = /^(97[89])?87/.test(isbn);
+  if (danish) { await lookupBibliotekDk(isbn, out); await lookupGoogle(isbn, out); }
+  else { await lookupGoogle(isbn, out); await lookupBibliotekDk(isbn, out); }
+  if (!out.title || !out.series || !out.authors.length) try {
     const ed = await fetchJson('https://openlibrary.org/isbn/' + encodeURIComponent(isbn) + '.json');
     if (!out.title && ed.title) out.title = ed.title;
-    if (ed.series && ed.series.length) {
+    if (!out.series && ed.series && ed.series.length) {
       let s = String(ed.series[0]);
       const m = s.match(/(.*?)[,;]?\s*(?:#|bd\.?|bind|book|no\.?|vol\.?)\s*(\d+)\s*\.?$/i);
       if (m) { out.series = m[1].trim().replace(/[;,]$/, ''); out.seriesNo = m[2]; }
@@ -905,7 +922,7 @@ async function handleIsbn(isbn) {
 function showExists(b) {
   showView('add'); showAddSub('exists');
   const status = [
-    b.owned ? '✅ Du <b>ejer</b> den' + (b.format ? ' (' + ({fysisk:'fysisk',ebog:'e-bog',lydbog:'lydbog'}[b.format]||b.format) + ')' : '') : '❌ Du ejer den ikke',
+    b.owned ? '✅ Du <b>ejer</b> den' + (b.format ? ' (' + ({hardback:'hardback',paperback:'paperback'}[b.format]||esc(b.format)) + ')' : '') : '❌ Du ejer den ikke',
     b.read ? '✅ Du har <b>læst</b> den' + (b.readYear ? ' i ' + b.readYear : '') : '📖 Du har ikke læst den endnu',
     b.wishlist ? '♡ Den står på din ønskeliste' : ''
   ].filter(Boolean).join('<br>');
@@ -1096,9 +1113,8 @@ function openDetail(id) {
       <div class="togglerow" id="dFmtRow" style="${b.owned ? '' : 'display:none'}">
         <div class="tl">Format</div>
         <select id="dFormat" style="width:auto">
-          <option value="fysisk" ${b.format === 'fysisk' ? 'selected' : ''}>📖 Fysisk (hardcopy)</option>
-          <option value="ebog" ${b.format === 'ebog' ? 'selected' : ''}>📱 E-bog</option>
-          <option value="lydbog" ${b.format === 'lydbog' ? 'selected' : ''}>🎧 Lydbog</option>
+          <option value="hardback" ${b.format === 'hardback' ? 'selected' : ''}>📕 Hardback</option>
+          <option value="paperback" ${b.format !== 'hardback' ? 'selected' : ''}>📖 Paperback</option>
         </select>
       </div>
       <div class="togglerow">
@@ -1246,7 +1262,7 @@ function renderStats() {
   const authors = Object.entries(byAuthor).sort((a, b2) => b2[1] - a[1]).slice(0, 8);
   $('chartAuthors').innerHTML = authors.length ? barRows(authors) : '<div class="muted">Markér bøger som læst for at se statistikken</div>';
 
-  const fmtName = { fysisk: '📖 Fysisk', ebog: '📱 E-bog', lydbog: '🎧 Lydbog' };
+  const fmtName = { hardback: '📕 Hardback', paperback: '📖 Paperback' };
   const byFmt = {};
   arr.filter(b => b.owned).forEach(b => { const k = fmtName[b.format] || 'Andet'; byFmt[k] = (byFmt[k] || 0) + 1; });
   $('chartFormats').innerHTML = barRows(Object.entries(byFmt).sort((a, b2) => b2[1] - a[1]));

@@ -311,7 +311,7 @@ function sanitizeBook(b) {
     series: s(b.series).slice(0, 300),
     seriesNo: s(b.seriesNo).slice(0, 10),
     owned: !!b.owned,
-    format: ['fysisk', 'ebog', 'lydbog'].includes(b.format) ? b.format : 'fysisk',
+    format: ['hardback', 'paperback'].includes(b.format) ? b.format : 'paperback',
     read: !!b.read,
     readYear: Number.isInteger(b.readYear) ? b.readYear : null,
     wishlist: !!b.wishlist,
@@ -502,6 +502,40 @@ const server = http.createServer(async (req, res) => {
         n++;
       }
       return send(res, 200, { imported: n });
+    }
+
+    /* bogopslag via bibliotek.dk (danske boeger) - API'et sender ingen CORS-headers, saa serveren proxyer */
+    if (p.startsWith('/api/lookup/isbn/') && req.method === 'GET') {
+      const isbn = decodeURIComponent(p.slice('/api/lookup/isbn/'.length)).replace(/[^0-9Xx]/g, '');
+      if (isbn.length !== 10 && isbn.length !== 13) return err(res, 400, 'Ugyldigt ISBN');
+      try {
+        const r = await fetch('https://bibliotek.dk/api/SimpleSearch/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000),
+          body: JSON.stringify({
+            query: 'query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ cover{ detail } } } } } }',
+            variables: { q: { all: isbn } }
+          })
+        });
+        const j = await r.json();
+        const w = j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
+        if (!w) return send(res, 200, { found: false });
+        const serie = (w.series && w.series[0]) || null;
+        const numMatch = serie ? String(serie.numberInSeries || '').match(/\d+/) : null;
+        const covers = (w.manifestations && w.manifestations.mostRelevant) || [];
+        const cover = covers.find(m => m.cover && m.cover.detail);
+        return send(res, 200, {
+          found: true,
+          title: (w.titles && w.titles.full && w.titles.full[0]) || '',
+          authors: (w.creators || []).map(c => c.display).filter(Boolean),
+          series: (serie && serie.title) || '',
+          seriesNo: numMatch ? numMatch[0] : '',
+          cover: (cover && cover.cover.detail) || ''
+        });
+      } catch (e) {
+        return send(res, 200, { found: false });
+      }
     }
 
     /* admin */

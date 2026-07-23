@@ -11,10 +11,12 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
   serie op (Google Books + Open Library) og siger til med det samme, hvis du
   allerede har bogen.
 - 🖼️ **Foto af forsiden** — tekstgenkendelse finder bogen ud fra titlen.
+- 🇩🇰 Bogopslag via **bibliotek.dk** (danske bøger inkl. serier), Google Books og
+  Open Library.
 - ⌨️ Manuel indtastning og fritekst-søgning i bogdatabasen.
 - 🔎 Hurtige filtre og sortering: forfatter, titel, serie, vurdering — ejet, læst,
-  *læst men ikke købt*, ulæst, ønskeliste, hardcopy.
-- 📖 Pr. bog: købt/ej, format (fysisk/e-bog/lydbog), læst (med årstal), stjerner,
+  *læst men ikke købt*, ulæst, ønskeliste, hardback, paperback.
+- 📖 Pr. bog: købt/ej, format (hardback/paperback), læst (med årstal), stjerner,
   noter.
 - 📚 **Serie-oversigt** — se hele serien, markér hvad du har, og få links til de
   bøger du mangler.
