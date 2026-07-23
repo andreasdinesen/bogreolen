@@ -1,0 +1,1505 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Min Bogreol</title>
+<meta name="description" content="Hold styr på dine bøger – ejede, læste og ønskede.">
+<meta name="theme-color" content="#f9f9f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Bogreol">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232a78d6'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle'%3E%F0%9F%93%9A%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f9f9f7;
+  --card: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink2: #52514e;
+  --muted: #898781;
+  --line: #e1e0d9;
+  --hairline: rgba(11,11,11,0.10);
+  --accent: #2a78d6;
+  --accent-ink: #ffffff;
+  --accent-soft: #e3eefb;
+  --good: #0ca30c;
+  --good-soft: #e2f3e2;
+  --good-ink: #006300;
+  --read-soft: #e3eefb;
+  --read-ink: #1c5cab;
+  --wish: #d55181;
+  --wish-soft: #fbe9f0;
+  --warn-soft: #fdf3dc;
+  --warn-ink: #7a5200;
+  --danger: #d03b3b;
+  --bar: #2a78d6;
+  --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 14px rgba(0,0,0,0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0d0d0d;
+    --card: #1a1a19;
+    --ink: #ffffff;
+    --ink2: #c3c2b7;
+    --muted: #898781;
+    --line: #2c2c2a;
+    --hairline: rgba(255,255,255,0.10);
+    --accent: #3987e5;
+    --accent-ink: #ffffff;
+    --accent-soft: #16283d;
+    --good: #0ca30c;
+    --good-soft: #12290f;
+    --good-ink: #4fc44f;
+    --read-soft: #16283d;
+    --read-ink: #86b6ef;
+    --wish: #d55181;
+    --wish-soft: #33141f;
+    --warn-soft: #2e2410;
+    --warn-ink: #e5b95c;
+    --danger: #e66767;
+    --bar: #3987e5;
+    --shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.45;
+  padding-bottom: calc(64px + env(safe-area-inset-bottom));
+}
+h1 { font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 1.05rem; margin: 1.2rem 0 0.5rem; }
+button { font: inherit; cursor: pointer; }
+input, select, textarea {
+  -webkit-appearance: none;
+  appearance: none;
+  font: inherit;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+label { display: block; font-size: 0.82rem; color: var(--ink2); margin: 12px 0 4px; font-weight: 600; }
+.view { display: none; padding: 14px 14px 20px; max-width: 640px; margin: 0 auto; }
+.view.active { display: block; }
+.appbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0 12px; }
+.appbar .sub { font-size: 0.8rem; color: var(--muted); }
+.syncdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: 1px; }
+.syncdot.on { background: var(--good); }
+.syncdot.err { background: var(--danger); }
+
+/* Search + chips */
+.searchrow { position: relative; margin-bottom: 10px; }
+.searchrow input { padding-left: 38px; border-radius: 12px; }
+.searchrow .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+.chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 10px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); color: var(--ink2);
+  border-radius: 999px; padding: 6px 13px; font-size: 0.86rem; font-weight: 600; white-space: nowrap;
+}
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip .n { opacity: 0.75; font-weight: 500; font-size: 0.78rem; }
+.sortrow { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+.sortrow select { flex: 1; padding: 8px 10px; font-size: 0.88rem; }
+.sortrow .lbl { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+
+/* Book cards */
+.bookcard {
+  display: flex; gap: 12px; background: var(--card); border: 1px solid var(--hairline);
+  border-radius: 14px; padding: 10px; margin-bottom: 10px; box-shadow: var(--shadow);
+  cursor: pointer; align-items: flex-start;
+}
+.cover { width: 52px; height: 76px; border-radius: 6px; background: var(--accent-soft); flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center; font-size: 1.5rem; overflow: hidden; border: 1px solid var(--hairline); }
+.cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bmain { flex: 1; min-width: 0; }
+.btitle { font-weight: 700; font-size: 0.98rem; line-height: 1.25; }
+.bauthor { color: var(--ink2); font-size: 0.86rem; margin-top: 1px; }
+.bseries { color: var(--muted); font-size: 0.8rem; margin-top: 1px; font-style: italic; }
+.badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.badge { font-size: 0.72rem; font-weight: 700; border-radius: 6px; padding: 2px 7px; letter-spacing: 0.01em; }
+.badge.owned { background: var(--good-soft); color: var(--good-ink); }
+.badge.read { background: var(--read-soft); color: var(--read-ink); }
+.badge.wish { background: var(--wish-soft); color: var(--wish); }
+.badge.fmt { background: var(--bg); color: var(--ink2); border: 1px solid var(--line); }
+.badge.unread { background: var(--warn-soft); color: var(--warn-ink); }
+.bstars { color: #eda100; font-size: 0.8rem; margin-top: 3px; letter-spacing: 1px; }
+.empty { text-align: center; color: var(--muted); padding: 40px 20px; }
+.empty .big { font-size: 2.6rem; margin-bottom: 8px; }
+
+/* Buttons */
+.btn {
+  display: block; width: 100%; border: none; border-radius: 12px; padding: 13px 16px;
+  font-weight: 700; font-size: 0.98rem; background: var(--accent); color: var(--accent-ink); margin: 8px 0;
+}
+.btn.sec { background: var(--card); color: var(--ink); border: 1px solid var(--line); }
+.btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--line); }
+.btn.small { width: auto; display: inline-block; padding: 8px 14px; font-size: 0.85rem; margin: 4px 4px 4px 0; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.bigadd {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+  background: var(--card); border: 1px solid var(--hairline); box-shadow: var(--shadow);
+  border-radius: 14px; padding: 15px; margin-bottom: 10px; color: var(--ink);
+}
+.bigadd .em { font-size: 1.7rem; }
+.bigadd .t { font-weight: 700; }
+.bigadd .d { font-size: 0.82rem; color: var(--ink2); }
+
+/* Scan */
+#reader { width: 100%; border-radius: 14px; overflow: hidden; background: #000; min-height: 240px; }
+.scanhint { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
+
+/* Toggle switches */
+.togglerow { display: flex; align-items: center; justify-content: space-between; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+.togglerow:last-child { border-bottom: none; }
+.togglerow .tl { font-weight: 600; font-size: 0.95rem; }
+.togglerow .td { font-size: 0.78rem; color: var(--muted); }
+.switch { position: relative; width: 48px; height: 28px; flex: 0 0 auto; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 2; }
+.switch .track { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: background 0.15s; }
+.switch .track::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.15s;
+}
+.switch input:checked + .track { background: var(--good); }
+.switch input:checked + .track::after { transform: translateX(20px); }
+
+/* Star input */
+.starinput { display: flex; gap: 6px; font-size: 1.7rem; }
+.starinput button { background: none; border: none; padding: 2px; color: var(--line); }
+.starinput button.on { color: #eda100; }
+
+/* Cards / panels */
+.panel { background: var(--card); border: 1px solid var(--hairline); border-radius: 14px; padding: 14px; margin-bottom: 12px; box-shadow: var(--shadow); }
+.notice { border-radius: 12px; padding: 12px 14px; margin: 10px 0; font-size: 0.9rem; }
+.notice.ok { background: var(--good-soft); color: var(--good-ink); }
+.notice.warn { background: var(--warn-soft); color: var(--warn-ink); }
+.notice.info { background: var(--accent-soft); color: var(--read-ink); }
+
+/* Modal */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50; display: none; align-items: flex-end; justify-content: center; }
+.overlay.open { display: flex; }
+.sheet {
+  background: var(--bg); width: 100%; max-width: 640px; max-height: 88vh; overflow-y: auto;
+  border-radius: 18px 18px 0 0; padding: 16px 16px calc(20px + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch;
+}
+.sheet .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 12px; }
+.sheethead { display: flex; gap: 14px; margin-bottom: 6px; }
+.sheethead .cover { width: 72px; height: 106px; font-size: 2rem; }
+
+/* Stats */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 6px; }
+.tile { background: var(--card); border: 1px solid var(--hairline); border-radius: 14px; padding: 12px 14px; box-shadow: var(--shadow); }
+.tile .v { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; }
+.tile .l { font-size: 0.78rem; color: var(--ink2); font-weight: 600; }
+.chart { margin-top: 4px; }
+.chart .row { display: grid; grid-template-columns: 84px 1fr 34px; align-items: center; gap: 8px; padding: 4px 0; }
+.chart .yl { font-size: 0.82rem; color: var(--ink2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart .track { height: 14px; border-left: 1px solid var(--line); display: flex; align-items: center; }
+.chart .fill { height: 12px; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+.chart .vl { font-size: 0.82rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* Series list */
+.serieitem { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.serieitem:last-child { border-bottom: none; }
+.serieitem .st { font-size: 0.92rem; font-weight: 600; flex: 1; min-width: 0; }
+.serieitem .sy { color: var(--muted); font-weight: 400; font-size: 0.8rem; }
+.serieitem a { color: var(--accent); text-decoration: none; font-size: 0.82rem; font-weight: 700; white-space: nowrap; }
+
+/* Search results */
+.result { display: flex; gap: 10px; align-items: center; background: var(--card); border: 1px solid var(--hairline);
+  border-radius: 12px; padding: 8px; margin-bottom: 8px; cursor: pointer; }
+.result .cover { width: 40px; height: 58px; font-size: 1.1rem; }
+.result .rt { font-weight: 700; font-size: 0.9rem; }
+.result .ra { color: var(--ink2); font-size: 0.8rem; }
+
+/* Bottom nav */
+nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+  background: var(--card); border-top: 1px solid var(--line);
+  display: flex; padding-bottom: env(safe-area-inset-bottom);
+}
+nav button {
+  flex: 1; background: none; border: none; padding: 8px 0 6px; color: var(--muted);
+  font-size: 0.68rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 1px;
+}
+nav button .i { font-size: 1.35rem; line-height: 1.2; }
+nav button.on { color: var(--accent); }
+
+/* Toast */
+#toast {
+  position: fixed; bottom: calc(76px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--ink); color: var(--bg); padding: 10px 18px; border-radius: 999px; font-size: 0.88rem; font-weight: 600;
+  opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 100; max-width: 90vw; text-align: center;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.spin { display: inline-block; width: 18px; height: 18px; border: 2.5px solid var(--line); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.muted { color: var(--muted); font-size: 0.84rem; }
+.center { text-align: center; }
+details.help { margin: 10px 0; }
+details.help summary { font-weight: 700; font-size: 0.9rem; color: var(--ink2); cursor: pointer; }
+details.help .inner { font-size: 0.85rem; color: var(--ink2); padding: 8px 0; }
+code.sql { display: block; white-space: pre-wrap; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font-size: 0.72rem; margin: 8px 0; user-select: all; }
+
+/* Login */
+body.loggedout nav { display: none; }
+#view-login { max-width: 420px; padding-top: 8vh; }
+.loginlogo { text-align: center; font-size: 3rem; margin-bottom: 4px; }
+.loginlogo + h1 { text-align: center; margin-bottom: 4px; }
+.loginsub { text-align: center; color: var(--muted); font-size: 0.88rem; margin-bottom: 18px; }
+.divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 0.78rem; margin: 14px 0; }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.formerror { color: var(--danger); font-size: 0.86rem; margin-top: 8px; min-height: 1.2em; }
+
+/* Admin user list */
+.userrow { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.userrow:last-child { border-bottom: none; }
+.userrow .un { font-weight: 700; }
+.userrow .um { font-size: 0.76rem; color: var(--muted); }
+.userrow .grow { flex: 1; min-width: 140px; }
+.iconbtn { border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 6px 10px; font-size: 0.8rem; font-weight: 700; }
+.iconbtn.warn { color: var(--danger); }
+.iconbtn.acc { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.pkitem { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 0.88rem; }
+.pkitem:last-child { border-bottom: none; }
+</style>
+</head>
+<body class="loggedout">
+
+<!-- ============ LOGIN ============ -->
+<section id="view-login" class="view">
+  <div class="loginlogo">📚</div>
+  <h1 id="loginTitle">Min Bogreol</h1>
+  <div class="loginsub" id="loginSub">Log ind for at se dit bibliotek</div>
+  <form id="loginForm" autocomplete="on">
+    <label>Brugernavn</label>
+    <input type="text" id="lUser" autocomplete="username" autocapitalize="none" required>
+    <label>Kodeord</label>
+    <input type="password" id="lPass" autocomplete="current-password" required>
+    <div class="formerror" id="loginError"></div>
+    <button type="submit" class="btn" id="loginBtn">Log ind</button>
+  </form>
+  <button class="btn sec" id="passkeyLoginBtn">🔑 Log ind med passkey</button>
+  <div class="divider">eller</div>
+  <button class="btn sec" id="showRegBtn">Opret ny bruger</button>
+  <form id="regForm" style="display:none" autocomplete="on">
+    <label>Vælg brugernavn</label>
+    <input type="text" id="rUser" autocomplete="username" autocapitalize="none" required>
+    <label>Vælg kodeord (mindst 8 tegn)</label>
+    <input type="password" id="rPass" autocomplete="new-password" required minlength="8">
+    <label>Gentag kodeord</label>
+    <input type="password" id="rPass2" autocomplete="new-password" required>
+    <div class="formerror" id="regError"></div>
+    <button type="submit" class="btn">Opret bruger</button>
+    <div class="muted center" style="margin-top:6px">Den første bruger, der oprettes, bliver automatisk administrator.</div>
+  </form>
+</section>
+
+<!-- ============ BIBLIOTEK ============ -->
+<section id="view-lib" class="view active">
+  <div class="appbar">
+    <div>
+      <h1>📚 Min Bogreol</h1>
+      <div class="sub" id="libCount"></div>
+    </div>
+    <div class="sub" id="syncState"></div>
+  </div>
+  <div class="searchrow">
+    <span class="icon">🔎</span>
+    <input type="search" id="q" placeholder="Søg titel, forfatter, serie eller ISBN…" autocomplete="off">
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="sortrow">
+    <span class="lbl">Sortér:</span>
+    <select id="sort">
+      <option value="author">Forfatter (A–Å)</option>
+      <option value="title">Titel (A–Å)</option>
+      <option value="added">Senest tilføjet</option>
+      <option value="rating">Vurdering (høj–lav)</option>
+      <option value="series">Serie</option>
+    </select>
+  </div>
+  <div id="list"></div>
+</section>
+
+<!-- ============ TILFØJ ============ -->
+<section id="view-add" class="view">
+  <div class="appbar"><h1>Tilføj bog</h1></div>
+
+  <div id="addMenu">
+    <button class="bigadd" id="btnScan">
+      <span class="em">📷</span>
+      <span><span class="t">Scan stregkode</span><br><span class="d">Scan ISBN-koden bag på bogen</span></span>
+    </button>
+    <button class="bigadd" id="btnPhoto">
+      <span class="em">🖼️</span>
+      <span><span class="t">Foto af forsiden</span><br><span class="d">Tag et billede – appen prøver at genkende bogen</span></span>
+    </button>
+    <button class="bigadd" id="btnSearch">
+      <span class="em">🔎</span>
+      <span><span class="t">Søg på titel/forfatter</span><br><span class="d">Slå bogen op i bogdatabasen</span></span>
+    </button>
+    <button class="bigadd" id="btnManual">
+      <span class="em">⌨️</span>
+      <span><span class="t">Indtast manuelt</span><br><span class="d">Skriv alle oplysninger selv</span></span>
+    </button>
+  </div>
+
+  <!-- Scanner -->
+  <div id="scanBox" style="display:none">
+    <div id="reader"></div>
+    <div class="scanhint">Hold kameraet hen over stregkoden (ISBN) bag på bogen</div>
+    <label>Eller indtast ISBN manuelt</label>
+    <div style="display:flex; gap:8px">
+      <input type="text" id="isbnManual" inputmode="numeric" placeholder="fx 9788702123456">
+      <button class="btn small" id="isbnManualGo" style="margin:0">Slå op</button>
+    </div>
+    <button class="btn sec" id="scanCancel">Annullér</button>
+  </div>
+
+  <!-- Foto / OCR -->
+  <div id="photoBox" style="display:none">
+    <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+    <div id="photoStatus" class="center" style="padding:20px 0; display:none">
+      <span class="spin"></span> <span id="photoStatusText">Analyserer billedet…</span>
+      <div class="muted" style="margin-top:6px">Første gang hentes tekstgenkendelse (kan tage lidt tid)</div>
+    </div>
+    <button class="btn sec" id="photoCancel">Annullér</button>
+  </div>
+
+  <!-- Tekstsøgning -->
+  <div id="searchBox" style="display:none">
+    <label>Søg efter bog</label>
+    <div style="display:flex; gap:8px">
+      <input type="search" id="bookQuery" placeholder="Titel og/eller forfatter">
+      <button class="btn small" id="bookQueryGo" style="margin:0">Søg</button>
+    </div>
+    <div id="searchResults" style="margin-top:12px"></div>
+    <button class="btn sec" id="searchCancel">Tilbage</button>
+  </div>
+
+  <!-- Har du allerede bogen? -->
+  <div id="existsBox" style="display:none"></div>
+
+  <!-- Tilføj/redigér-formular -->
+  <form id="addForm" style="display:none" autocomplete="off">
+    <div id="lookupNote"></div>
+    <div style="display:flex; gap:12px; align-items:flex-start">
+      <div class="cover" id="formCover">📕</div>
+      <div style="flex:1">
+        <label style="margin-top:0">Titel *</label>
+        <input type="text" id="fTitle" required>
+        <label>Forfatter(e) <span class="muted">(adskil med komma)</span></label>
+        <input type="text" id="fAuthors" placeholder="fx Jussi Adler-Olsen">
+      </div>
+    </div>
+    <label>ISBN</label>
+    <input type="text" id="fIsbn" inputmode="numeric">
+    <div style="display:flex; gap:10px">
+      <div style="flex:2">
+        <label>Serie</label>
+        <input type="text" id="fSeries" placeholder="fx Afdeling Q">
+      </div>
+      <div style="flex:1">
+        <label>Nr. i serien</label>
+        <input type="text" id="fSeriesNo" inputmode="numeric" placeholder="fx 3">
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="togglerow">
+        <div><div class="tl">Jeg ejer bogen</div><div class="td">Har du købt den?</div></div>
+        <span class="switch"><input type="checkbox" id="fOwned"><span class="track"></span></span>
+      </div>
+      <div class="togglerow" id="fmtRow" style="display:none">
+        <div class="tl">Format</div>
+        <select id="fFormat" style="width:auto">
+          <option value="fysisk">📖 Fysisk (hardcopy)</option>
+          <option value="ebog">📱 E-bog</option>
+          <option value="lydbog">🎧 Lydbog</option>
+        </select>
+      </div>
+      <div class="togglerow">
+        <div><div class="tl">Jeg har læst den</div></div>
+        <span class="switch"><input type="checkbox" id="fRead"><span class="track"></span></span>
+      </div>
+      <div class="togglerow" id="yearRow" style="display:none">
+        <div class="tl">Læst i år</div>
+        <input type="number" id="fReadYear" style="width:100px" min="1950" max="2100">
+      </div>
+      <div class="togglerow">
+        <div><div class="tl">Ønskeliste</div><div class="td">Vil læse / vil købe</div></div>
+        <span class="switch"><input type="checkbox" id="fWish"><span class="track"></span></span>
+      </div>
+    </div>
+
+    <label>Vurdering</label>
+    <div class="starinput" id="fStars"></div>
+    <label>Noter</label>
+    <textarea id="fNotes" rows="3" placeholder="Hvad syntes du om den?"></textarea>
+
+    <input type="hidden" id="fCoverUrl">
+    <input type="hidden" id="fEditId">
+    <button type="submit" class="btn" id="formSave">Gem bog</button>
+    <button type="button" class="btn sec" id="formCancel">Annullér</button>
+  </form>
+</section>
+
+<!-- ============ STATISTIK ============ -->
+<section id="view-stats" class="view">
+  <div class="appbar"><h1>📈 Statistik</h1></div>
+  <div class="tiles" id="tiles"></div>
+  <div class="panel">
+    <h2 style="margin-top:0">Læste bøger pr. år</h2>
+    <div class="chart" id="chartYears"></div>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">Mest læste forfattere</h2>
+    <div class="chart" id="chartAuthors"></div>
+  </div>
+  <div class="panel">
+    <h2 style="margin-top:0">Format (ejede bøger)</h2>
+    <div class="chart" id="chartFormats"></div>
+  </div>
+</section>
+
+<!-- ============ MERE ============ -->
+<section id="view-more" class="view">
+  <div class="appbar"><h1>⚙️ Mere</h1></div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">👤 Min konto</h2>
+    <div class="notice info" id="whoAmI"></div>
+    <h2>🔑 Passkeys</h2>
+    <div class="muted">Log ind med Face ID, fingeraftryk eller enhedens lås – uden kodeord. Tilføj en passkey på hver enhed, du bruger.</div>
+    <div id="pkList"></div>
+    <button class="btn small" id="pkAdd">＋ Tilføj passkey på denne enhed</button>
+    <div class="formerror" id="pkError"></div>
+    <details class="help">
+      <summary>Skift kodeord</summary>
+      <div class="inner">
+        <label>Nuværende kodeord</label>
+        <input type="password" id="cpCurrent" autocomplete="current-password">
+        <label>Nyt kodeord (mindst 8 tegn)</label>
+        <input type="password" id="cpNew" autocomplete="new-password">
+        <button class="btn small" id="cpSave">Gem nyt kodeord</button>
+        <div class="formerror" id="cpError"></div>
+      </div>
+    </details>
+    <button class="btn small sec iconbtn" id="btnLogout" style="margin-top:10px">Log ud</button>
+  </div>
+
+  <div class="panel" id="adminPanel" style="display:none">
+    <h2 style="margin-top:0">👑 Administration</h2>
+    <div class="togglerow">
+      <div><div class="tl">Tillad nye registreringer</div><div class="td">Slå fra, når alle i husstanden har en bruger</div></div>
+      <span class="switch"><input type="checkbox" id="admAllowReg"><span class="track"></span></span>
+    </div>
+    <h2>Brugere</h2>
+    <div id="admUsers"><span class="spin"></span></div>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">💾 Sikkerhedskopi</h2>
+    <div class="muted">Gem en kopi af hele dit bibliotek som en fil, eller hent en tidligere kopi ind.</div>
+    <button class="btn small" id="btnExport">⬇ Eksportér</button>
+    <button class="btn small sec" id="btnImport" style="background:var(--card); border:1px solid var(--line); color:var(--ink)">⬆ Importér</button>
+    <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">ℹ️ Om appen</h2>
+    <div class="muted">
+      Min Bogreol kører på din egen server (Yggdrasil Panel) og gemmer alt i sin egen database dér.
+      Log ind fra alle dine enheder – biblioteket er altid det samme. Bogopslag sker via Google Books og Open Library.
+      Læg appen på hjemmeskærmen: åbn browserens menu og vælg <b>»Føj til hjemmeskærm«</b>.
+    </div>
+  </div>
+</section>
+
+<!-- Detail-modal -->
+<div class="overlay" id="overlay">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<nav>
+  <button data-view="lib" class="on"><span class="i">📚</span>Bibliotek</button>
+  <button data-view="add"><span class="i">➕</span>Tilføj</button>
+  <button data-view="stats"><span class="i">📈</span>Statistik</button>
+  <button data-view="more"><span class="i">⚙️</span>Mere</button>
+</nav>
+
+<div id="toast"></div>
+<script>
+'use strict';
+/* ================= Min Bogreol ================= */
+
+const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
+const LIB_TESS = ['https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js'];
+
+let books = [];
+let me = null;
+let chipSel = 'all';
+let pendingPhotoCover = '';
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() :
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+  }));
+const nowIso = () => new Date().toISOString();
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9æøå]/g, '');
+const ts = x => { const t = Date.parse(x || ''); return isNaN(t) ? 0 : t; };
+const normIsbn = s => {
+  const d = String(s || '').replace(/[^0-9Xx]/g, '').toUpperCase();
+  return (d.length === 13 && (d.startsWith('978') || d.startsWith('979'))) || d.length === 10 ? d : null;
+};
+const lastName = a => { const p = String(a || '').trim().split(/\s+/); return p.length ? p[p.length - 1].toLowerCase() : ''; };
+async function fetchJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function toast(msg, ms) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._t);
+  t._t = setTimeout(() => t.classList.remove('show'), ms || 2600);
+}
+const scriptCache = {};
+function injectScript(urls) {
+  const key = urls[0];
+  if (scriptCache[key]) return scriptCache[key];
+  scriptCache[key] = new Promise((resolve, reject) => {
+    const tryNext = i => {
+      if (i >= urls.length) { delete scriptCache[key]; return reject(new Error('Kunne ikke hente ' + key)); }
+      const s = document.createElement('script');
+      s.src = urls[i];
+      s.onload = () => resolve();
+      s.onerror = () => { s.remove(); tryNext(i + 1); };
+      document.head.appendChild(s);
+    };
+    tryNext(0);
+  });
+  return scriptCache[key];
+}
+
+/* ---------- server-API ---------- */
+async function api(path, body, method) {
+  const opts = {
+    method: method || (body !== undefined ? 'POST' : 'GET'),
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin'
+  };
+  if (body !== undefined && opts.method !== 'GET') opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  let data = {};
+  try { data = await r.json(); } catch (e) {}
+  if (r.status === 401 && !path.startsWith('/api/login') && !path.startsWith('/api/webauthn/login') && path !== '/api/password') {
+    showLogin();
+    throw new Error(data.error || 'Ikke logget ind');
+  }
+  if (!r.ok) throw new Error(data.error || 'Serverfejl (' + r.status + ')');
+  return data;
+}
+function pushBook(b) {
+  api('/api/books', { book: b }).catch(e => toast('⚠️ Kunne ikke gemme på serveren: ' + e.message));
+}
+const alive = () => books.filter(b => !b.deleted);
+const findByIsbn = isbn => { const n = normIsbn(isbn); return n ? alive().find(b => normIsbn(b.isbn) === n) : null; };
+const findByTitleAuthor = (t, a) => {
+  const nt = norm(t); if (!nt) return null;
+  const na = norm((a || [])[0] || '');
+  return alive().find(b => norm(b.title) === nt && (!na || norm((b.authors || [])[0] || '') === na));
+};
+function markDirty() { renderAll(); }
+function addBook(data) {
+  const b = Object.assign({
+    id: uuid(), isbn: '', title: '', authors: [], cover: '', series: '', seriesNo: '',
+    owned: false, format: 'fysisk', read: false, readYear: null, wishlist: false,
+    rating: 0, notes: '', addedAt: nowIso(), updatedAt: nowIso(), deleted: false
+  }, data);
+  books.push(b);
+  markDirty();
+  pushBook(b);
+  return b;
+}
+function updateBook(id, patch) {
+  const b = books.find(x => x.id === id);
+  if (!b) return null;
+  Object.assign(b, patch, { updatedAt: nowIso() });
+  markDirty();
+  pushBook(b);
+  return b;
+}
+
+/* ---------- navigation ---------- */
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === name));
+  if (name !== 'add') { stopScan(); }
+  if (name === 'add') { showAddSub('menu'); }
+  if (name === 'stats') { renderStats(); }
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll('nav button').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+
+function showAddSub(which) {
+  ['addMenu', 'scanBox', 'photoBox', 'searchBox', 'existsBox', 'addForm'].forEach(id => {
+    $(id).style.display = 'none';
+  });
+  const map = { menu: 'addMenu', scan: 'scanBox', photo: 'photoBox', search: 'searchBox', exists: 'existsBox', form: 'addForm' };
+  $(map[which]).style.display = 'block';
+  if (which !== 'scan') stopScan();
+}
+
+/* ---------- chips / list ---------- */
+const CHIPS = [
+  { id: 'all', label: 'Alle', f: b => true },
+  { id: 'owned', label: 'Ejet', f: b => b.owned },
+  { id: 'read', label: 'Læst', f: b => b.read },
+  { id: 'unread', label: 'Ulæst (ejet)', f: b => b.owned && !b.read },
+  { id: 'readnotowned', label: 'Læst · ikke købt', f: b => b.read && !b.owned },
+  { id: 'wish', label: 'Ønskeliste', f: b => b.wishlist },
+  { id: 'fysisk', label: '📖 Hardcopy', f: b => b.owned && b.format === 'fysisk' }
+];
+function renderChips() {
+  const arr = alive();
+  $('chips').innerHTML = CHIPS.map(c =>
+    `<button class="chip${chipSel === c.id ? ' on' : ''}" data-chip="${c.id}">${c.label} <span class="n">${arr.filter(c.f).length}</span></button>`
+  ).join('');
+}
+$('chips').addEventListener('click', e => {
+  const btn = e.target.closest('[data-chip]');
+  if (!btn) return;
+  chipSel = btn.dataset.chip;
+  renderChips(); renderList();
+});
+$('q').addEventListener('input', renderList);
+$('sort').addEventListener('change', renderList);
+
+function coverHtml(b, cls) {
+  const fallback = ['📕', '📗', '📘', '📙'][ (norm(b.title).length + (b.title||'').length) % 4 ];
+  if (b.cover) return `<div class="cover ${cls || ''}"><img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.parentNode.innerHTML='${fallback}'"></div>`;
+  return `<div class="cover ${cls || ''}">${fallback}</div>`;
+}
+function badgesHtml(b) {
+  const fmtIcon = { fysisk: '📖 Fysisk', ebog: '📱 E-bog', lydbog: '🎧 Lydbog' };
+  let h = '';
+  if (b.owned) h += `<span class="badge owned">Ejet</span>`;
+  if (b.owned && b.format) h += `<span class="badge fmt">${fmtIcon[b.format] || esc(b.format)}</span>`;
+  if (b.read) h += `<span class="badge read">Læst${b.readYear ? ' ' + b.readYear : ''}</span>`;
+  if (b.owned && !b.read) h += `<span class="badge unread">Ulæst</span>`;
+  if (b.read && !b.owned) h += `<span class="badge fmt">Ikke købt</span>`;
+  if (b.wishlist) h += `<span class="badge wish">♡ Ønske</span>`;
+  return h;
+}
+function getFiltered() {
+  const chip = CHIPS.find(c => c.id === chipSel) || CHIPS[0];
+  const q = norm($('q').value);
+  let arr = alive().filter(chip.f);
+  if (q) arr = arr.filter(b =>
+    norm(b.title).includes(q) || norm((b.authors || []).join(' ')).includes(q) ||
+    norm(b.series).includes(q) || String(b.isbn || '').replace(/[^0-9Xx]/g, '').includes($('q').value.replace(/[^0-9Xx]/g, '') || ' ')
+  );
+  const s = $('sort').value;
+  const cmp = {
+    author: (a, b2) => (lastName((a.authors || [])[0]) || 'øøø').localeCompare(lastName((b2.authors || [])[0]) || 'øøø', 'da') || a.title.localeCompare(b2.title, 'da'),
+    title: (a, b2) => a.title.localeCompare(b2.title, 'da'),
+    added: (a, b2) => (b2.addedAt || '').localeCompare(a.addedAt || ''),
+    rating: (a, b2) => (b2.rating || 0) - (a.rating || 0) || a.title.localeCompare(b2.title, 'da'),
+    series: (a, b2) => (a.series || 'øøøøø').localeCompare(b2.series || 'øøøøø', 'da') || (parseFloat(a.seriesNo) || 999) - (parseFloat(b2.seriesNo) || 999) || a.title.localeCompare(b2.title, 'da')
+  }[s];
+  return arr.sort(cmp);
+}
+function renderList() {
+  const arr = getFiltered();
+  const total = alive();
+  $('libCount').textContent = total.length
+    ? `${total.length} bøger · ${total.filter(b => b.owned).length} ejet · ${total.filter(b => b.read).length} læst`
+    : 'Dit bibliotek er tomt';
+  if (!arr.length) {
+    $('list').innerHTML = total.length
+      ? `<div class="empty"><div class="big">🔎</div>Ingen bøger matcher din søgning/filtret.</div>`
+      : `<div class="empty"><div class="big">📚</div>Velkommen! Tryk på <b>➕ Tilføj</b> for at registrere din første bog – scan stregkoden, eller indtast den selv.</div>`;
+    return;
+  }
+  $('list').innerHTML = arr.map(b => `
+    <div class="bookcard" data-id="${b.id}">
+      ${coverHtml(b)}
+      <div class="bmain">
+        <div class="btitle">${esc(b.title)}</div>
+        <div class="bauthor">${esc((b.authors || []).join(', '))}</div>
+        ${b.series ? `<div class="bseries">Serie: ${esc(b.series)}${b.seriesNo ? ' #' + esc(b.seriesNo) : ''}</div>` : ''}
+        ${b.rating ? `<div class="bstars">${'★'.repeat(b.rating)}${'☆'.repeat(5 - b.rating)}</div>` : ''}
+        <div class="badges">${badgesHtml(b)}</div>
+      </div>
+    </div>`).join('');
+}
+$('list').addEventListener('click', e => {
+  const card = e.target.closest('.bookcard');
+  if (card) openDetail(card.dataset.id);
+});
+function renderAll() { renderChips(); renderList(); if ($('view-stats').classList.contains('active')) renderStats(); }
+
+/* ---------- stars input ---------- */
+function renderStars(el, value, onchange) {
+  el.innerHTML = '';
+  for (let i = 1; i <= 5; i++) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = '★';
+    b.className = i <= value ? 'on' : '';
+    b.setAttribute('aria-label', i + ' stjerner');
+    b.addEventListener('click', () => {
+      const nv = (value === i) ? 0 : i;
+      renderStars(el, nv, onchange);
+      onchange(nv);
+    });
+    el.appendChild(b);
+  }
+}
+
+/* ---------- add form ---------- */
+let formRating = 0;
+function openForm(prefill, editId) {
+  const p = prefill || {};
+  showView('add'); showAddSub('form');
+  $('lookupNote').innerHTML = p._note || '';
+  $('fTitle').value = p.title || '';
+  $('fAuthors').value = (p.authors || []).join(', ');
+  $('fIsbn').value = p.isbn || '';
+  $('fSeries').value = p.series || '';
+  $('fSeriesNo').value = p.seriesNo || '';
+  $('fOwned').checked = !!p.owned;
+  $('fFormat').value = p.format || 'fysisk';
+  $('fRead').checked = !!p.read;
+  $('fReadYear').value = p.readYear || '';
+  $('fWish').checked = !!p.wishlist;
+  $('fNotes').value = p.notes || '';
+  $('fCoverUrl').value = p.cover || '';
+  $('fEditId').value = editId || '';
+  formRating = p.rating || 0;
+  renderStars($('fStars'), formRating, v => formRating = v);
+  $('formCover').innerHTML = p.cover ? `<img src="${esc(p.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">` : '📕';
+  $('formSave').textContent = editId ? 'Gem ændringer' : 'Gem bog';
+  delete $('addForm').dataset.dupwarned;
+  syncFormRows();
+}
+function syncFormRows() {
+  $('fmtRow').style.display = $('fOwned').checked ? 'flex' : 'none';
+  $('yearRow').style.display = $('fRead').checked ? 'flex' : 'none';
+}
+$('fOwned').addEventListener('change', syncFormRows);
+$('fRead').addEventListener('change', () => {
+  if ($('fRead').checked && !$('fReadYear').value) $('fReadYear').value = new Date().getFullYear();
+  syncFormRows();
+});
+$('addForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const editId = $('fEditId').value;
+  const data = {
+    title: $('fTitle').value.trim(),
+    authors: $('fAuthors').value.split(',').map(s => s.trim()).filter(Boolean),
+    isbn: $('fIsbn').value.trim(),
+    series: $('fSeries').value.trim(),
+    seriesNo: $('fSeriesNo').value.trim(),
+    owned: $('fOwned').checked,
+    format: $('fFormat').value,
+    read: $('fRead').checked,
+    readYear: $('fRead').checked ? (parseInt($('fReadYear').value, 10) || null) : null,
+    wishlist: $('fWish').checked,
+    rating: formRating,
+    notes: $('fNotes').value.trim(),
+    cover: $('fCoverUrl').value
+  };
+  if (!data.title) return;
+  if (!editId) {
+    const dup = findByIsbn(data.isbn) || findByTitleAuthor(data.title, data.authors);
+    if (dup && !$('addForm').dataset.dupwarned) {
+      $('addForm').dataset.dupwarned = '1';
+      $('lookupNote').innerHTML = `<div class="notice warn">⚠️ <b>${esc(dup.title)}</b> ser ud til allerede at være i dit bibliotek (${dup.owned ? 'ejet' : dup.read ? 'læst' : 'på listen'}). Tryk »Gem« igen for at tilføje alligevel.</div>`;
+      window.scrollTo(0, 0);
+      return;
+    }
+    addBook(data);
+    toast('📚 »' + data.title + '« er tilføjet');
+  } else {
+    updateBook(editId, data);
+    toast('Ændringer gemt');
+  }
+  pendingPhotoCover = '';
+  showView('lib');
+});
+$('formCancel').addEventListener('click', () => { pendingPhotoCover = ''; showAddSub('menu'); });
+$('btnManual').addEventListener('click', () => openForm({ owned: true }));
+
+/* ---------- ISBN lookup ---------- */
+async function lookupIsbn(isbn) {
+  const out = { isbn, title: '', authors: [], cover: '', series: '', seriesNo: '' };
+  try {
+    const g = await fetchJson('https://www.googleapis.com/books/v1/volumes?q=isbn:' + encodeURIComponent(isbn));
+    if (g.totalItems > 0 && g.items && g.items[0].volumeInfo) {
+      const v = g.items[0].volumeInfo;
+      out.title = v.title || '';
+      if (v.subtitle && out.title && !out.title.includes(v.subtitle)) out.title += ' – ' + v.subtitle;
+      out.authors = v.authors || [];
+      if (v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail)) {
+        out.cover = (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail).replace(/^http:/, 'https:');
+      }
+    }
+  } catch (e) {}
+  try {
+    const ed = await fetchJson('https://openlibrary.org/isbn/' + encodeURIComponent(isbn) + '.json');
+    if (!out.title && ed.title) out.title = ed.title;
+    if (ed.series && ed.series.length) {
+      let s = String(ed.series[0]);
+      const m = s.match(/(.*?)[,;]?\s*(?:#|bd\.?|bind|book|no\.?|vol\.?)\s*(\d+)\s*\.?$/i);
+      if (m) { out.series = m[1].trim().replace(/[;,]$/, ''); out.seriesNo = m[2]; }
+      else out.series = s.replace(/\s*;\s*$/, '').trim();
+    }
+    if (!out.authors.length && ed.authors && ed.authors.length) {
+      try {
+        const a = await fetchJson('https://openlibrary.org' + ed.authors[0].key + '.json');
+        if (a.name) out.authors = [a.name];
+      } catch (e) {}
+    }
+  } catch (e) {}
+  if (!out.cover) out.cover = 'https://covers.openlibrary.org/b/isbn/' + encodeURIComponent(isbn) + '-M.jpg?default=false';
+  return out;
+}
+async function handleIsbn(isbn) {
+  const ex = findByIsbn(isbn);
+  if (ex) { showExists(ex); return; }
+  openForm({ isbn, owned: true, _note: `<div class="notice info"><span class="spin"></span> Slår ISBN ${esc(isbn)} op…</div>` });
+  const info = await lookupIsbn(isbn);
+  if (info.title) {
+    const dup = findByTitleAuthor(info.title, info.authors);
+    if (dup) { showExists(dup); return; }
+    openForm(Object.assign({ owned: true, _note: `<div class="notice ok">✔ Bogen blev fundet i bogdatabasen – tjek oplysningerne og gem.</div>` }, info));
+  } else {
+    openForm({ isbn, owned: true, cover: pendingPhotoCover, _note: `<div class="notice warn">Bogen blev ikke fundet automatisk – udfyld selv titlen og gem.</div>` });
+  }
+}
+function showExists(b) {
+  showView('add'); showAddSub('exists');
+  const status = [
+    b.owned ? '✅ Du <b>ejer</b> den' + (b.format ? ' (' + ({fysisk:'fysisk',ebog:'e-bog',lydbog:'lydbog'}[b.format]||b.format) + ')' : '') : '❌ Du ejer den ikke',
+    b.read ? '✅ Du har <b>læst</b> den' + (b.readYear ? ' i ' + b.readYear : '') : '📖 Du har ikke læst den endnu',
+    b.wishlist ? '♡ Den står på din ønskeliste' : ''
+  ].filter(Boolean).join('<br>');
+  $('existsBox').innerHTML = `
+    <div class="notice ok" style="font-size:1rem"><b>Du har allerede denne bog i biblioteket! 🎉</b></div>
+    <div class="bookcard" data-noclick="1">
+      ${coverHtml(b)}
+      <div class="bmain">
+        <div class="btitle">${esc(b.title)}</div>
+        <div class="bauthor">${esc((b.authors || []).join(', '))}</div>
+        <div style="margin-top:8px; font-size:0.9rem">${status}</div>
+      </div>
+    </div>
+    <button class="btn" id="exOpen">Se / redigér bogen</button>
+    <button class="btn sec" id="exScan">📷 Scan en ny bog</button>
+    <button class="btn sec" id="exMenu">Tilbage</button>`;
+  $('exOpen').addEventListener('click', () => { showView('lib'); openDetail(b.id); });
+  $('exScan').addEventListener('click', startScan);
+  $('exMenu').addEventListener('click', () => showAddSub('menu'));
+}
+
+/* ---------- scanner ---------- */
+let scanner = null;
+$('btnScan').addEventListener('click', startScan);
+$('scanCancel').addEventListener('click', () => showAddSub('menu'));
+$('isbnManualGo').addEventListener('click', () => {
+  const isbn = normIsbn($('isbnManual').value);
+  if (!isbn) { toast('Det ligner ikke et gyldigt ISBN (10 eller 13 cifre)'); return; }
+  $('isbnManual').value = '';
+  handleIsbn(isbn);
+});
+async function startScan() {
+  showAddSub('scan');
+  $('reader').innerHTML = '<div class="center" style="color:#fff; padding:40px 10px"><span class="spin"></span> Starter kamera…</div>';
+  try {
+    await injectScript(LIB_QR);
+  } catch (e) {
+    $('reader').innerHTML = '<div class="center" style="color:#fff; padding:30px 10px">Kunne ikke hente scanner-modulet (tjek internetforbindelsen). Du kan stadig indtaste ISBN herunder.</div>';
+    return;
+  }
+  try {
+    $('reader').innerHTML = '';
+    scanner = new Html5Qrcode('reader', {
+      formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.UPC_A]
+    });
+    await scanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 260, height: 140 } },
+      text => {
+        const isbn = normIsbn(text);
+        if (!isbn) return;
+        if (navigator.vibrate) navigator.vibrate(80);
+        stopScan();
+        handleIsbn(isbn);
+      },
+      () => {}
+    );
+  } catch (e) {
+    $('reader').innerHTML = '<div class="center" style="color:#fff; padding:30px 10px">Kameraet kunne ikke startes – har du givet browseren lov til at bruge kameraet? Du kan indtaste ISBN herunder i stedet.</div>';
+  }
+}
+function stopScan() {
+  if (scanner) {
+    const s = scanner; scanner = null;
+    Promise.resolve().then(() => s.stop()).then(() => s.clear()).catch(() => {});
+  }
+}
+
+/* ---------- text search (add) ---------- */
+$('btnSearch').addEventListener('click', () => { showAddSub('search'); $('searchResults').innerHTML = ''; $('bookQuery').value = ''; $('bookQuery').focus(); });
+$('searchCancel').addEventListener('click', () => { pendingPhotoCover = ''; showAddSub('menu'); });
+$('bookQueryGo').addEventListener('click', () => runBookSearch($('bookQuery').value));
+$('bookQuery').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runBookSearch($('bookQuery').value); } });
+async function runBookSearch(q) {
+  q = String(q || '').trim();
+  if (!q) return;
+  $('searchResults').innerHTML = '<div class="center" style="padding:16px"><span class="spin"></span></div>';
+  let items = [];
+  try {
+    const g = await fetchJson('https://www.googleapis.com/books/v1/volumes?maxResults=8&q=' + encodeURIComponent(q));
+    items = (g.items || []).map(it => {
+      const v = it.volumeInfo || {};
+      const ids = v.industryIdentifiers || [];
+      const i13 = ids.find(x => x.type === 'ISBN_13'), i10 = ids.find(x => x.type === 'ISBN_10');
+      return {
+        title: v.title || '', authors: v.authors || [],
+        isbn: (i13 && i13.identifier) || (i10 && i10.identifier) || '',
+        cover: v.imageLinks ? (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail || '').replace(/^http:/, 'https:') : '',
+        year: (v.publishedDate || '').slice(0, 4)
+      };
+    }).filter(x => x.title);
+  } catch (e) {}
+  if (!items.length) {
+    $('searchResults').innerHTML = '<div class="empty">Ingen resultater – prøv en anden søgning, eller <button class="btn small sec" id="srManual" style="border:1px solid var(--line); background:var(--card); color:var(--ink)">indtast manuelt</button></div>';
+    const m = $('srManual'); if (m) m.addEventListener('click', () => openForm({ title: $('bookQuery').value, owned: true, cover: pendingPhotoCover }));
+    return;
+  }
+  $('searchResults').innerHTML = items.map((x, i) => `
+    <div class="result" data-i="${i}">
+      ${x.cover ? `<div class="cover"><img src="${esc(x.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'"></div>` : '<div class="cover">📕</div>'}
+      <div><div class="rt">${esc(x.title)}</div><div class="ra">${esc(x.authors.join(', '))}${x.year ? ' · ' + esc(x.year) : ''}</div></div>
+    </div>`).join('');
+  $('searchResults').querySelectorAll('.result').forEach(el => el.addEventListener('click', () => {
+    const x = items[+el.dataset.i];
+    const ex = (x.isbn && findByIsbn(x.isbn)) || findByTitleAuthor(x.title, x.authors);
+    if (ex) { showExists(ex); return; }
+    openForm({
+      title: x.title, authors: x.authors, isbn: x.isbn, cover: x.cover || pendingPhotoCover, owned: true,
+      _note: '<div class="notice ok">✔ Tjek oplysningerne og gem.</div>'
+    });
+  }));
+}
+
+/* ---------- photo / OCR ---------- */
+$('btnPhoto').addEventListener('click', () => { showAddSub('photo'); $('photoInput').value = ''; $('photoInput').click(); });
+$('photoCancel').addEventListener('click', () => { pendingPhotoCover = ''; showAddSub('menu'); });
+$('photoInput').addEventListener('change', async e => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  $('photoStatus').style.display = 'block';
+  $('photoStatusText').textContent = 'Gør billedet klar…';
+  try {
+    const img = await loadImageFile(file);
+    pendingPhotoCover = drawScaled(img, 300).toDataURL('image/jpeg', 0.7);
+    const big = drawScaled(img, 1100);
+    $('photoStatusText').textContent = 'Henter tekstgenkendelse…';
+    await injectScript(LIB_TESS);
+    $('photoStatusText').textContent = 'Læser teksten på forsiden…';
+    const worker = await Tesseract.createWorker(['dan', 'eng']);
+    const res = await worker.recognize(big);
+    await worker.terminate();
+    const text = (res && res.data && res.data.text) || '';
+    const lines = text.split('\n').map(s => s.replace(/[^0-9A-Za-zÆØÅæøå' \-:.]/g, ' ').replace(/\s+/g, ' ').trim())
+      .filter(s => s.length > 3);
+    lines.sort((a, b) => b.length - a.length);
+    const q = lines.slice(0, 2).join(' ').slice(0, 80);
+    $('photoStatus').style.display = 'none';
+    showAddSub('search');
+    $('bookQuery').value = q;
+    if (q) { runBookSearch(q); toast('Vælg den rigtige bog på listen – eller ret søgningen'); }
+    else { toast('Kunne ikke læse teksten – søg manuelt'); }
+  } catch (err) {
+    $('photoStatus').style.display = 'none';
+    showAddSub('search');
+    toast('Billedgenkendelse fejlede – søg manuelt i stedet');
+  }
+});
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+function drawScaled(img, maxW) {
+  const sc = Math.min(1, maxW / img.naturalWidth);
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * sc);
+  c.height = Math.round(img.naturalHeight * sc);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+
+/* ---------- detail sheet ---------- */
+function openDetail(id) {
+  const b = books.find(x => x.id === id && !x.deleted);
+  if (!b) return;
+  const sheet = $('sheet');
+  sheet.innerHTML = `
+    <div class="grab"></div>
+    <div class="sheethead">
+      ${coverHtml(b)}
+      <div style="flex:1; min-width:0">
+        <div class="btitle" style="font-size:1.15rem">${esc(b.title)}</div>
+        <div class="bauthor">${esc((b.authors || []).join(', '))}</div>
+        ${b.series ? `<div class="bseries">Serie: ${esc(b.series)}${b.seriesNo ? ' #' + esc(b.seriesNo) : ''}</div>` : ''}
+        ${b.isbn ? `<div class="muted" style="font-size:0.75rem; margin-top:3px">ISBN ${esc(b.isbn)}</div>` : ''}
+        <div class="badges" id="dBadges">${badgesHtml(b)}</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="togglerow">
+        <div><div class="tl">Jeg ejer bogen</div></div>
+        <span class="switch"><input type="checkbox" id="dOwned" ${b.owned ? 'checked' : ''}><span class="track"></span></span>
+      </div>
+      <div class="togglerow" id="dFmtRow" style="${b.owned ? '' : 'display:none'}">
+        <div class="tl">Format</div>
+        <select id="dFormat" style="width:auto">
+          <option value="fysisk" ${b.format === 'fysisk' ? 'selected' : ''}>📖 Fysisk (hardcopy)</option>
+          <option value="ebog" ${b.format === 'ebog' ? 'selected' : ''}>📱 E-bog</option>
+          <option value="lydbog" ${b.format === 'lydbog' ? 'selected' : ''}>🎧 Lydbog</option>
+        </select>
+      </div>
+      <div class="togglerow">
+        <div><div class="tl">Jeg har læst den</div></div>
+        <span class="switch"><input type="checkbox" id="dRead" ${b.read ? 'checked' : ''}><span class="track"></span></span>
+      </div>
+      <div class="togglerow" id="dYearRow" style="${b.read ? '' : 'display:none'}">
+        <div class="tl">Læst i år</div>
+        <input type="number" id="dReadYear" style="width:100px" value="${b.readYear || ''}" min="1950" max="2100">
+      </div>
+      <div class="togglerow">
+        <div><div class="tl">Ønskeliste</div></div>
+        <span class="switch"><input type="checkbox" id="dWish" ${b.wishlist ? 'checked' : ''}><span class="track"></span></span>
+      </div>
+    </div>
+    <label>Vurdering</label>
+    <div class="starinput" id="dStars"></div>
+    <label>Noter</label>
+    <textarea id="dNotes" rows="3">${esc(b.notes || '')}</textarea>
+    ${b.series ? `<button class="btn sec" id="dSeries">🔗 Se serien »${esc(b.series)}« – find de bøger du mangler</button><div id="dSeriesBox"></div>` : ''}
+    <button class="btn sec" id="dEdit">✏️ Redigér oplysninger</button>
+    <button class="btn danger" id="dDelete">Slet bogen</button>
+    <button class="btn sec" id="dClose">Luk</button>`;
+  $('overlay').classList.add('open');
+
+  const refresh = () => { $('dBadges').innerHTML = badgesHtml(books.find(x => x.id === id)); };
+  $('dOwned').addEventListener('change', e => {
+    $('dFmtRow').style.display = e.target.checked ? 'flex' : 'none';
+    updateBook(id, { owned: e.target.checked }); refresh();
+  });
+  $('dFormat').addEventListener('change', e => { updateBook(id, { format: e.target.value }); refresh(); });
+  $('dRead').addEventListener('change', e => {
+    const yr = e.target.checked ? (parseInt($('dReadYear').value, 10) || new Date().getFullYear()) : null;
+    $('dYearRow').style.display = e.target.checked ? 'flex' : 'none';
+    if (e.target.checked && !$('dReadYear').value) $('dReadYear').value = yr;
+    updateBook(id, { read: e.target.checked, readYear: yr }); refresh();
+  });
+  $('dReadYear').addEventListener('change', e => updateBook(id, { readYear: parseInt(e.target.value, 10) || null }));
+  $('dWish').addEventListener('change', e => { updateBook(id, { wishlist: e.target.checked }); refresh(); });
+  renderStars($('dStars'), b.rating || 0, v => { updateBook(id, { rating: v }); refresh(); });
+  let notesT = null;
+  $('dNotes').addEventListener('input', e => {
+    clearTimeout(notesT);
+    notesT = setTimeout(() => updateBook(id, { notes: e.target.value.trim() }), 600);
+  });
+  if (b.series) $('dSeries').addEventListener('click', () => seriesExplore(b, $('dSeriesBox')));
+  $('dEdit').addEventListener('click', () => { closeSheet(); openForm(b, b.id); });
+  $('dDelete').addEventListener('click', e => {
+    if (e.target.dataset.armed) {
+      updateBook(id, { deleted: true });
+      closeSheet();
+      toast('Bogen er slettet');
+    } else {
+      e.target.dataset.armed = '1';
+      e.target.textContent = 'Tryk igen for at slette permanent';
+    }
+  });
+  $('dClose').addEventListener('click', closeSheet);
+}
+function closeSheet() { $('overlay').classList.remove('open'); }
+$('overlay').addEventListener('click', e => { if (e.target === $('overlay')) closeSheet(); });
+
+/* ---------- series explorer ---------- */
+const seriesCache = {};
+async function seriesExplore(book, box) {
+  box.innerHTML = '<div class="center" style="padding:14px"><span class="spin"></span> Søger efter bøger i serien…</div>';
+  const name = book.series;
+  let docs = seriesCache[name];
+  if (!docs) {
+    try {
+      const d = await fetchJson('https://openlibrary.org/search.json?limit=50&fields=title,author_name,first_publish_year&q=' +
+        encodeURIComponent('series:"' + name + '"'));
+      docs = d.docs || [];
+      seriesCache[name] = docs;
+    } catch (e) { docs = null; }
+  }
+  const gr = t => 'https://www.goodreads.com/search?q=' + encodeURIComponent(t);
+  const gg = t => 'https://www.google.com/search?q=' + encodeURIComponent(t + ' bog');
+  if (!docs || !docs.length) {
+    box.innerHTML = `<div class="panel"><div class="muted">Kunne ikke finde serien automatisk i bogdatabasen.</div>
+      <a class="btn small" style="display:inline-block; text-decoration:none; text-align:center" target="_blank" rel="noopener" href="${gr(name)}">Se serien på Goodreads ↗</a></div>`;
+    return;
+  }
+  const seen = {};
+  const uniq = [];
+  docs.forEach(d => {
+    const k = norm(d.title);
+    if (!k || seen[k]) return;
+    seen[k] = 1;
+    uniq.push(d);
+  });
+  uniq.sort((a, b) => (a.first_publish_year || 9999) - (b.first_publish_year || 9999));
+  const libIdx = {};
+  alive().forEach(b => libIdx[norm(b.title)] = b);
+  const rows = uniq.slice(0, 25).map(d => {
+    const mine = libIdx[norm(d.title)];
+    const author = (d.author_name || [])[0] || '';
+    let right;
+    if (mine) {
+      right = badgesHtml(mine) || '<span class="badge fmt">På listen</span>';
+    } else {
+      right = `<a target="_blank" rel="noopener" href="${gr(d.title + ' ' + author)}">Goodreads ↗</a> <a target="_blank" rel="noopener" href="${gg(d.title + ' ' + author)}">Søg ↗</a>`;
+    }
+    return `<div class="serieitem">
+      <div class="st">${esc(d.title)} ${d.first_publish_year ? `<span class="sy">(${d.first_publish_year})</span>` : ''}<br><span class="sy">${esc(author)}</span></div>
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end">${right}</div>
+    </div>`;
+  }).join('');
+  box.innerHTML = `<div class="panel"><b style="font-size:0.9rem">Serien »${esc(name)}« (${uniq.length} fundet)</b>
+    <div class="muted" style="font-size:0.76rem; margin:2px 0 6px">Bøger du har, vises med mærkater – resten har links, så du kan finde dem</div>${rows}</div>`;
+}
+
+/* ---------- stats ---------- */
+function barRows(pairs, unit) {
+  if (!pairs.length) return '<div class="muted">Ingen data endnu</div>';
+  const max = Math.max(...pairs.map(p => p[1]));
+  return pairs.map(p => `
+    <div class="row">
+      <div class="yl">${esc(p[0])}</div>
+      <div class="track"><div class="fill" style="width:${Math.round(p[1] / max * 100)}%"></div></div>
+      <div class="vl">${p[1]}</div>
+    </div>`).join('');
+}
+function renderStats() {
+  const arr = alive();
+  const year = new Date().getFullYear();
+  const tiles = [
+    ['Ejet', arr.filter(b => b.owned).length],
+    ['Læst', arr.filter(b => b.read).length],
+    ['Læst i ' + year, arr.filter(b => b.read && b.readYear === year).length],
+    ['Ønskeliste', arr.filter(b => b.wishlist).length]
+  ];
+  $('tiles').innerHTML = tiles.map(t => `<div class="tile"><div class="v">${t[1]}</div><div class="l">${t[0]}</div></div>`).join('');
+
+  const byYear = {};
+  arr.filter(b => b.read).forEach(b => {
+    const k = b.readYear || 'Ukendt år';
+    byYear[k] = (byYear[k] || 0) + 1;
+  });
+  const years = Object.entries(byYear).sort((a, b2) => String(b2[0]).localeCompare(String(a[0])));
+  $('chartYears').innerHTML = barRows(years);
+
+  const byAuthor = {};
+  arr.filter(b => b.read).forEach(b => (b.authors || []).forEach(a => byAuthor[a] = (byAuthor[a] || 0) + 1));
+  const authors = Object.entries(byAuthor).sort((a, b2) => b2[1] - a[1]).slice(0, 8);
+  $('chartAuthors').innerHTML = authors.length ? barRows(authors) : '<div class="muted">Markér bøger som læst for at se statistikken</div>';
+
+  const fmtName = { fysisk: '📖 Fysisk', ebog: '📱 E-bog', lydbog: '🎧 Lydbog' };
+  const byFmt = {};
+  arr.filter(b => b.owned).forEach(b => { const k = fmtName[b.format] || 'Andet'; byFmt[k] = (byFmt[k] || 0) + 1; });
+  $('chartFormats').innerHTML = barRows(Object.entries(byFmt).sort((a, b2) => b2[1] - a[1]));
+}
+
+/* ---------- export / import ---------- */
+$('btnExport').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify({ app: 'bogreol', version: 1, exported: nowIso(), books }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'bogreol-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  toast('Backup hentet 💾');
+});
+$('btnImport').addEventListener('click', () => $('importFile').click());
+$('importFile').addEventListener('change', e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = async () => {
+    try {
+      const data = JSON.parse(r.result);
+      const arr = Array.isArray(data) ? data : data.books;
+      if (!Array.isArray(arr)) throw new Error('format');
+      const resp = await api('/api/books/import', { books: arr });
+      await loadBooks();
+      renderAll();
+      toast(`Importeret: ${resp.imported} bøger`);
+    } catch (err) { toast('⚠️ Import fejlede: ' + err.message); }
+  };
+  r.readAsText(f);
+  e.target.value = '';
+});
+
+/* ---------- login / konto ---------- */
+function showLogin() {
+  me = null;
+  document.body.classList.add('loggedout');
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-login'));
+}
+function showApp() {
+  document.body.classList.remove('loggedout');
+  showView('lib');
+}
+async function loadBooks() {
+  const d = await api('/api/books');
+  books = d.books || [];
+}
+async function afterLogin(m) {
+  me = m;
+  $('loginError').textContent = '';
+  $('lPass').value = '';
+  await loadBooks();
+  renderAll();
+  renderAccount();
+  showApp();
+}
+$('loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('loginError').textContent = '';
+  try {
+    const d = await api('/api/login', { username: $('lUser').value.trim(), password: $('lPass').value });
+    await afterLogin(d.me);
+  } catch (err) { $('loginError').textContent = err.message; }
+});
+$('showRegBtn').addEventListener('click', () => {
+  const f = $('regForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+});
+$('regForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('regError').textContent = '';
+  if ($('rPass').value !== $('rPass2').value) { $('regError').textContent = 'Kodeordene er ikke ens'; return; }
+  try {
+    const d = await api('/api/register', { username: $('rUser').value.trim(), password: $('rPass').value });
+    await afterLogin(d.me);
+    toast(d.firstUser ? '🎉 Velkommen! Du er oprettet som administrator.' : '🎉 Velkommen til!');
+  } catch (err) { $('regError').textContent = err.message; }
+});
+$('btnLogout').addEventListener('click', async () => {
+  try { await api('/api/logout', {}); } catch (e) {}
+  books = [];
+  showLogin();
+});
+
+/* ---------- WebAuthn (passkeys) ---------- */
+const bufToB64u = buf => {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const b64uToBuf = s => {
+  const bin = atob(String(s).replace(/-/g, '+').replace(/_/g, '/'));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+};
+function passkeySupported() { return !!(window.PublicKeyCredential && navigator.credentials); }
+
+$('passkeyLoginBtn').addEventListener('click', async () => {
+  $('loginError').textContent = '';
+  if (!passkeySupported()) { $('loginError').textContent = 'Denne browser understøtter ikke passkeys'; return; }
+  try {
+    const o = await api('/api/webauthn/login/options', {});
+    const pk = o.publicKey;
+    pk.challenge = b64uToBuf(pk.challenge);
+    pk.allowCredentials = [];
+    const cred = await navigator.credentials.get({ publicKey: pk });
+    const d = await api('/api/webauthn/login/verify', {
+      challengeId: o.challengeId,
+      id: cred.id,
+      response: {
+        clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+        authenticatorData: bufToB64u(cred.response.authenticatorData),
+        signature: bufToB64u(cred.response.signature),
+        userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null
+      }
+    });
+    await afterLogin(d.me);
+    toast('🔑 Logget ind med passkey');
+  } catch (err) {
+    if (err && err.name === 'NotAllowedError') { $('loginError').textContent = 'Passkey-login blev afbrudt'; return; }
+    $('loginError').textContent = err.message || 'Passkey-login fejlede';
+  }
+});
+$('pkAdd').addEventListener('click', async () => {
+  $('pkError').textContent = '';
+  if (!passkeySupported()) { $('pkError').textContent = 'Denne browser understøtter ikke passkeys'; return; }
+  if (!window.isSecureContext) { $('pkError').textContent = 'Passkeys kræver en sikker forbindelse (https)'; return; }
+  try {
+    const o = await api('/api/webauthn/register/options', {});
+    const pk = o.publicKey;
+    pk.challenge = b64uToBuf(pk.challenge);
+    pk.user.id = b64uToBuf(pk.user.id);
+    pk.excludeCredentials = (pk.excludeCredentials || []).map(c => Object.assign({}, c, { id: b64uToBuf(c.id) }));
+    const cred = await navigator.credentials.create({ publicKey: pk });
+    const label = (navigator.userAgentData && navigator.userAgentData.platform) ||
+      (/iPhone|iPad/.test(navigator.userAgent) ? 'iPhone/iPad' : /Android/.test(navigator.userAgent) ? 'Android' : 'Denne enhed');
+    const d = await api('/api/webauthn/register/verify', {
+      challengeId: o.challengeId,
+      id: cred.id,
+      label,
+      response: {
+        clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+        attestationObject: bufToB64u(cred.response.attestationObject)
+      }
+    });
+    me = d.me;
+    renderAccount();
+    toast('🔑 Passkey tilføjet – du kan nu logge ind uden kodeord');
+  } catch (err) {
+    if (err && err.name === 'NotAllowedError') { $('pkError').textContent = 'Oprettelsen blev afbrudt'; return; }
+    if (err && err.name === 'InvalidStateError') { $('pkError').textContent = 'Der findes allerede en passkey for denne enhed'; return; }
+    $('pkError').textContent = err.message || 'Kunne ikke oprette passkey';
+  }
+});
+
+/* ---------- konto-panel ---------- */
+function renderAccount() {
+  if (!me) return;
+  $('syncState').innerHTML = `<span class="syncdot on"></span>${esc(me.username)}`;
+  $('whoAmI').innerHTML = `Logget ind som <b>${esc(me.username)}</b>${me.isAdmin ? ' · 👑 administrator' : ''}`;
+  const list = me.passkeys || [];
+  $('pkList').innerHTML = list.length
+    ? list.map(k => `<div class="pkitem"><span>🔑 ${esc(k.label)} <span class="muted">· ${esc((k.created || '').slice(0, 10))}</span></span>
+        <button class="iconbtn warn" data-pk="${esc(k.id)}">Fjern</button></div>`).join('')
+    : '<div class="muted" style="padding:6px 0">Ingen passkeys endnu</div>';
+  $('pkList').querySelectorAll('[data-pk]').forEach(btn => btn.addEventListener('click', async () => {
+    try {
+      const d = await api('/api/webauthn/credentials/' + encodeURIComponent(btn.dataset.pk), undefined, 'DELETE');
+      me = d.me; renderAccount(); toast('Passkey fjernet');
+    } catch (e) { toast('⚠️ ' + e.message); }
+  }));
+  $('adminPanel').style.display = me.isAdmin ? 'block' : 'none';
+  if (me.isAdmin) renderAdmin();
+}
+$('cpSave').addEventListener('click', async () => {
+  $('cpError').textContent = '';
+  try {
+    await api('/api/password', { current: $('cpCurrent').value, password: $('cpNew').value });
+    $('cpCurrent').value = ''; $('cpNew').value = '';
+    toast('Kodeordet er skiftet ✔');
+  } catch (e) { $('cpError').textContent = e.message; }
+});
+
+/* ---------- admin-panel ---------- */
+async function renderAdmin() {
+  try {
+    const d = await api('/api/admin/users');
+    $('admAllowReg').checked = !!d.allowRegistration;
+    $('admUsers').innerHTML = d.users.map(u => `
+      <div class="userrow" data-uid="${u.id}">
+        <div class="grow">
+          <div class="un">${u.isAdmin ? '👑 ' : ''}${esc(u.username)}${me && u.id === me.id ? ' <span class="muted">(dig)</span>' : ''}</div>
+          <div class="um">${u.books} bøger · ${u.passkeys} passkeys · oprettet ${esc((u.created || '').slice(0, 10))}</div>
+        </div>
+        <button class="iconbtn" data-act="pw">Nyt kodeord</button>
+        <button class="iconbtn" data-act="role">${u.isAdmin ? 'Fjern admin' : 'Gør til admin'}</button>
+        ${me && u.id === me.id ? '' : '<button class="iconbtn warn" data-act="del">Slet</button>'}
+      </div>`).join('');
+    $('admUsers').querySelectorAll('.userrow').forEach(row => {
+      const uid = parseInt(row.dataset.uid, 10);
+      const usr = d.users.find(x => x.id === uid);
+      row.querySelectorAll('[data-act]').forEach(btn => btn.addEventListener('click', async () => {
+        try {
+          if (btn.dataset.act === 'pw') {
+            const np = prompt(`Nyt kodeord til »${usr.username}« (mindst 8 tegn):`);
+            if (np == null) return;
+            await api(`/api/admin/users/${uid}/password`, { password: np });
+            toast(`Kodeordet for ${usr.username} er skiftet`);
+          } else if (btn.dataset.act === 'role') {
+            await api(`/api/admin/users/${uid}/role`, { isAdmin: !usr.isAdmin });
+            toast(usr.isAdmin ? `${usr.username} er ikke længere admin` : `${usr.username} er nu administrator 👑`);
+          } else if (btn.dataset.act === 'del') {
+            if (!btn.dataset.armed) {
+              btn.dataset.armed = '1';
+              btn.textContent = 'Sikker? Tryk igen';
+              setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Slet'; }, 4000);
+              return;
+            }
+            await api(`/api/admin/users/${uid}`, undefined, 'DELETE');
+            toast(`Brugeren ${usr.username} er slettet`);
+          }
+          renderAdmin();
+        } catch (e) { toast('⚠️ ' + e.message); }
+      }));
+    });
+  } catch (e) {
+    $('admUsers').innerHTML = `<div class="muted">Kunne ikke hente brugere: ${esc(e.message)}</div>`;
+  }
+}
+$('admAllowReg').addEventListener('change', async e => {
+  try {
+    await api('/api/admin/settings', { allowRegistration: e.target.checked });
+    toast(e.target.checked ? 'Registrering er åben' : 'Registrering er lukket');
+  } catch (err) { toast('⚠️ ' + err.message); e.target.checked = !e.target.checked; }
+});
+
+/* ---------- init ---------- */
+async function init() {
+  try {
+    const d = await api('/api/me');
+    me = d.me;
+    await loadBooks();
+    renderAll();
+    renderAccount();
+    showApp();
+  } catch (e) {
+    showLogin();
+  }
+}
+init();
+</script>
+</body>
+</html>
