@@ -811,10 +811,12 @@ gameskill:
       .chip .n { opacity: 0.75; font-weight: 500; font-size: 0.78rem; }
       .sortrow { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
       #compactBtn { white-space: nowrap; }
-      #list.compact .cover, #list.compact .bseries, #list.compact .bstars,
-      #list.compact .badge.read, #list.compact .badge.unread, #list.compact .badge.loan, #list.compact .badge.wish { display: none; }
-      #list.compact .bookcard { padding: 8px 12px; }
-      #list.compact .badges { margin-top: 3px; }
+      #list.compact .cover, #list.compact .bseries, #list.compact .bstars, #list.compact .badges { display: none; }
+      #list.compact .bookcard { padding: 9px 12px; margin-bottom: 6px; }
+      #list.compact .bmain { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+      #list.compact .btitle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #list.compact .bauthor { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 4; }
+      #list.compact .bauthor::before { content: '– '; }
       .sortrow select { flex: 1; padding: 8px 10px; font-size: 0.88rem; }
       .sortrow .lbl { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
 
@@ -1048,7 +1050,7 @@ gameskill:
             <option value="rating">Vurdering (høj–lav)</option>
             <option value="series">Serie</option>
           </select>
-          <button type="button" class="chip" id="compactBtn" title="Kompakt visning – kun titel, forfatter og ejet/format">☰ Kompakt</button>
+          <button type="button" class="chip" id="compactBtn" title="Kompakt visning – titel og forfatter på én linje">☰ Kompakt</button>
         </div>
         <div id="list"></div>
       </section>
