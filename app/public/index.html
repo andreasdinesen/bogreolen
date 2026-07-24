@@ -279,6 +279,8 @@ nav button {
 nav button .i { font-size: 1.35rem; line-height: 1.2; }
 nav button.on { color: var(--accent); }
 .navver { margin-top: auto; text-align: center; font-size: 0.68rem; color: var(--muted); padding: 2px 0; }
+.letterhead { font-weight: 800; font-size: 0.82rem; color: var(--muted); margin: 14px 4px 6px; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+#list .letterhead:first-child { margin-top: 2px; }
 #navUnfold {
   position: fixed; left: 10px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 41;
   width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line);
@@ -658,6 +660,11 @@ const normIsbn = s => {
   return (d.length === 13 && (d.startsWith('978') || d.startsWith('979'))) || d.length === 10 ? d : null;
 };
 const lastName = a => { const p = String(a || '').trim().split(/\s+/); return p.length ? p[p.length - 1].toLowerCase() : ''; };
+const authorLastFirst = a => {
+  const p = String(a || '').trim().split(/\s+/);
+  return p.length > 1 ? p[p.length - 1] + ', ' + p.slice(0, -1).join(' ') : (p[0] || '');
+};
+const authorsDisplay = b => (b.authors || []).map(authorLastFirst).join(' & ');
 async function fetchJson(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -916,18 +923,32 @@ function renderList() {
       : `<div class="empty"><div class="big">📚</div>Velkommen! Tryk på <b>➕ Tilføj</b> for at registrere din første bog – scan stregkoden, eller indtast den selv.</div>`;
     return;
   }
-  $('list').innerHTML = arr.map(b => `
+  /* bogstavs-skillelinjer ved forfatter- og titel-sortering */
+  const letterOf = {
+    author: b => (lastName((b.authors || [])[0]) || '').charAt(0),
+    title: b => (b.title || '').charAt(0)
+  }[$('sort').value];
+  let html = '', lastLetter = null;
+  for (const b of arr) {
+    if (letterOf) {
+      let k = (letterOf(b) || '#').toLocaleUpperCase('da-DK');
+      if (!/[A-ZÆØÅ]/.test(k)) k = '#';
+      if (k !== lastLetter) { html += `<div class="letterhead">${esc(k)}</div>`; lastLetter = k; }
+    }
+    html += `
     <div class="bookcard" data-id="${b.id}">
       ${coverHtml(b)}
       <div class="bmain">
         ${listTop === 'author'
-          ? `<div class="btitle">${esc((b.authors || []).join(', ') || '(ukendt forfatter)')}</div><div class="bauthor">${esc(b.title)}</div>`
-          : `<div class="btitle">${esc(b.title)}</div><div class="bauthor">${esc((b.authors || []).join(', '))}</div>`}
+          ? `<div class="btitle">${esc(authorsDisplay(b) || '(ukendt forfatter)')}</div><div class="bauthor">${esc(b.title)}</div>`
+          : `<div class="btitle">${esc(b.title)}</div><div class="bauthor">${esc(authorsDisplay(b))}</div>`}
         ${b.series ? `<div class="bseries">Serie: ${esc(b.series)}${b.seriesNo ? ' #' + esc(b.seriesNo) : ''}</div>` : ''}
         ${b.rating ? `<div class="bstars">${'★'.repeat(b.rating)}${'☆'.repeat(5 - b.rating)}</div>` : ''}
         <div class="badges">${badgesHtml(b)}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }
+  $('list').innerHTML = html;
 }
 $('list').addEventListener('click', e => {
   const card = e.target.closest('.bookcard');
