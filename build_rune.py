@@ -8,6 +8,11 @@ def read(p):
 
 server_js = read('app/server.js')
 index_html = read('app/public/index.html')
+
+m = re.search(r'const APP_VERSION = (\d+);', index_html)
+if not m:
+    sys.exit('FEJL: APP_VERSION ikke fundet i index.html')
+app_version = m.group(1)
 icon192 = base64.b64encode(open('app/public/icon-192.png', 'rb').read()).decode()
 icon512 = base64.b64encode(open('app/public/icon-512.png', 'rb').read()).decode()
 
@@ -66,7 +71,7 @@ gameskill:
   category: "Apps"
   description: "Personligt bogbibliotek: scan ISBN, hold styr paa koebte/laeste boeger og oenskeliste. Flere brugere, passkey-login og admin-styring. Egen SQLite-database - ingen eksterne afhaengigheder."
   author: "andreas"
-  version: 4
+  version: {app_version}
   icon: "app"
 
   docker:

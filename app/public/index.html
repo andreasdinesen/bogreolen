@@ -278,7 +278,7 @@ nav button {
 }
 nav button .i { font-size: 1.35rem; line-height: 1.2; }
 nav button.on { color: var(--accent); }
-#navLogout { margin-top: auto; }
+.navver { margin-top: auto; text-align: center; font-size: 0.68rem; color: var(--muted); padding: 2px 0; }
 #navUnfold {
   position: fixed; left: 10px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 41;
   width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line);
@@ -620,6 +620,7 @@ body.loggedout nav { display: none; }
   <button data-view="add"><span class="i">➕</span>Tilføj</button>
   <button data-view="stats"><span class="i">📈</span>Statistik</button>
   <button data-view="more"><span class="i">⚙️</span>Mere</button>
+  <div class="navver" id="navVersion"></div>
   <button type="button" id="navLogout" title="Log ud"><span class="i">🚪</span>Log ud</button>
   <button type="button" id="themeQuick" title="Skift mellem lyst og mørkt tema"><span class="i">🌙</span><span id="themeQuickTxt">Mørk</span></button>
   <button type="button" id="navFold" title="Fold menuen sammen"><span class="i">◀</span>Skjul</button>
@@ -629,6 +630,8 @@ body.loggedout nav { display: none; }
 <div id="toast"></div>
 <script>
 'use strict';
+/* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
+const APP_VERSION = 5;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -745,6 +748,8 @@ function showView(name) {
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('nav button[data-view]').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+
+$('navVersion').textContent = 'v' + APP_VERSION;
 
 /* sammenfoldelig sidemenu (ren UI-praeference, gemmes i localStorage) */
 let navFolded = false;
