@@ -604,6 +604,13 @@ body.loggedout nav { display: none; }
   </div>
 
   <div class="panel">
+    <h2 style="margin-top:0">🔍 Berig med ISBN og covers</h2>
+    <div class="muted">Slår bøger uden ISBN op på titel + forfatter (bibliotek.dk) og udfylder ISBN, cover og serie — kun tomme felter, og kun når titel og forfatter matcher. Kan stoppes og genoptages når som helst.</div>
+    <button class="btn small" id="btnEnrich">Start berigelse</button>
+    <div class="muted" id="enrichStatus" style="margin-top:6px"></div>
+  </div>
+
+  <div class="panel">
     <h2 style="margin-top:0">💾 Sikkerhedskopi</h2>
     <div class="muted">Gem en kopi af hele dit bibliotek som en fil, eller hent en tidligere kopi ind.</div>
     <button class="btn small" id="btnExport">⬇ Eksportér (JSON med billeder)</button>
@@ -643,7 +650,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1578,6 +1585,50 @@ function renderStats() {
   arr.filter(b => b.owned).forEach(b => { const k = fmtName[b.format] || 'Andet'; byFmt[k] = (byFmt[k] || 0) + 1; });
   $('chartFormats').innerHTML = barRows(Object.entries(byFmt).sort((a, b2) => b2[1] - a[1]));
 }
+
+/* ---------- berigelse: slaa boeger uden ISBN op paa titel + forfatter ---------- */
+const titleMatches = (mine, theirs) => {
+  const a = norm(mine), b = norm(theirs);
+  return !!(a && b && (a === b || a.startsWith(b) || b.startsWith(a)));
+};
+const authorMatches = (mine, theirs) => {
+  if (!(mine || []).length) return true;
+  const s = lastName(mine[0]);
+  return (theirs || []).some(t => lastName(t) === s);
+};
+let enrichRunning = false;
+$('btnEnrich').addEventListener('click', async () => {
+  if (enrichRunning) { enrichRunning = false; $('btnEnrich').textContent = 'Start berigelse'; return; }
+  const targets = alive().filter(b => b.title && !normIsbn(b.isbn));
+  if (!targets.length) { toast('Alle bøger har allerede et ISBN 🎉'); return; }
+  enrichRunning = true;
+  $('btnEnrich').textContent = 'Stop';
+  let filled = 0, skipped = 0, done = 0;
+  for (const b of targets) {
+    if (!enrichRunning) break;
+    done++;
+    $('enrichStatus').textContent = `Slår op… ${done}/${targets.length} · udfyldt: ${filled} · uden sikkert match: ${skipped}`;
+    try {
+      const d = await fetchJson('/api/lookup/search?q=' + encodeURIComponent(b.title + ' ' + ((b.authors || [])[0] || '')));
+      if (d.found && titleMatches(b.title, d.title) && authorMatches(b.authors, d.authors)) {
+        const patch = {};
+        if (d.isbn && !normIsbn(b.isbn)) patch.isbn = d.isbn;
+        if (d.cover && !b.cover) patch.cover = d.cover;
+        if (d.series && !b.series) { patch.series = d.series; patch.seriesNo = d.seriesNo || ''; }
+        if (Object.keys(patch).length) {
+          Object.assign(b, patch, { updatedAt: nowIso() });
+          pushBook(b);
+          filled++;
+        } else skipped++;
+      } else skipped++;
+    } catch (e) { skipped++; }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  enrichRunning = false;
+  $('btnEnrich').textContent = 'Start berigelse';
+  $('enrichStatus').textContent = `Færdig: ${filled} bøger udfyldt, ${skipped} uden sikkert match (af ${done} forsøgt).`;
+  renderAll();
+});
 
 /* ---------- export / import ---------- */
 function downloadFile(content, filename, mime) {

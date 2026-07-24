@@ -549,6 +549,47 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* fritekst-opslag (titel + forfatter) - bruges af berigelses-funktionen til boeger uden ISBN */
+    if (p === '/api/lookup/search' && req.method === 'GET') {
+      const qtext = String(u.searchParams.get('q') || '').trim().slice(0, 200);
+      if (!qtext) return err(res, 400, 'Mangler soegetekst');
+      try {
+        const r = await fetch('https://bibliotek.dk/api/SimpleSearch/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000),
+          body: JSON.stringify({
+            query: 'query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ identifiers{ type value } materialTypes{ materialTypeGeneral{ code } } cover{ detail } } } } } }',
+            variables: { q: { all: qtext } }
+          })
+        });
+        const j = await r.json();
+        const w = j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
+        if (!w) return send(res, 200, { found: false });
+        const mans = (w.manifestations && w.manifestations.mostRelevant) || [];
+        const isBook = m => (m.materialTypes || []).some(t => t.materialTypeGeneral && t.materialTypeGeneral.code === 'BOOKS');
+        const isbnOf = m => {
+          const id = (m.identifiers || []).find(i => i.type === 'ISBN');
+          return id ? String(id.value).replace(/[^0-9Xx]/g, '') : '';
+        };
+        const best = mans.find(m => isBook(m) && isbnOf(m)) || mans.find(m => isbnOf(m)) || null;
+        const withCover = (best && best.cover && best.cover.detail) ? best : mans.find(m => m.cover && m.cover.detail);
+        const serie = (w.series && w.series[0]) || null;
+        const num = serie ? String(serie.numberInSeries || '').match(/\d+/) : null;
+        return send(res, 200, {
+          found: true,
+          title: (w.titles && w.titles.full && w.titles.full[0]) || '',
+          authors: (w.creators || []).map(c => c.display).filter(Boolean),
+          series: (serie && serie.title) || '',
+          seriesNo: num ? num[0] : '',
+          isbn: best ? isbnOf(best) : '',
+          cover: (withCover && withCover.cover.detail) || ''
+        });
+      } catch (e) {
+        return send(res, 200, { found: false });
+      }
+    }
+
     /* cover-proxy til eksport med billeder: browseren kan ikke laese cross-origin billeddata (canvas-taint) */
     if (p === '/api/lookup/cover' && req.method === 'GET') {
       const COVER_HOSTS = ['covers.openlibrary.org', 'books.google.com', 'fbiinfo-present.dbc.dk'];
