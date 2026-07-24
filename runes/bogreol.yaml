@@ -6,7 +6,7 @@ gameskill:
   category: "Apps"
   description: "Personligt bogbibliotek: scan ISBN, hold styr paa koebte/laeste boeger og oenskeliste. Flere brugere, passkey-login og admin-styring. Egen SQLite-database - ingen eksterne afhaengigheder."
   author: "andreas"
-  version: 7
+  version: 8
   icon: "app"
 
   docker:
@@ -800,8 +800,12 @@ gameskill:
 
       /* Search + chips */
       .searchrow { position: relative; margin-bottom: 10px; }
-      .searchrow input { padding-left: 38px; border-radius: 12px; }
+      .searchrow input { padding-left: 38px; padding-right: 42px; border-radius: 12px; }
       .searchrow .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+      #qScan { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 1.15rem; padding: 6px; color: var(--muted); }
+      #searchScanOverlay { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.93); display: none; flex-direction: column; justify-content: center; padding: 20px; }
+      #searchScanOverlay.open { display: flex; }
+      #searchReader { max-width: 480px; width: 100%; margin: 0 auto; border-radius: 12px; overflow: hidden; }
       .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0 10px; }
       .chip {
         flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); color: var(--ink2);
@@ -1041,6 +1045,12 @@ gameskill:
         <div class="searchrow">
           <span class="icon">🔎</span>
           <input type="search" id="q" placeholder="Søg titel, forfatter, serie eller ISBN…" autocomplete="off">
+          <button type="button" id="qScan" title="Scan ISBN og søg i biblioteket">📷</button>
+        </div>
+        <div id="searchScanOverlay">
+          <div id="searchReader"></div>
+          <div class="scanhint" style="color:#c3c2b7">Scan stregkoden (ISBN) – bogen søges frem i dit bibliotek</div>
+          <button type="button" class="btn sec" id="searchScanCancel" style="max-width:480px; margin:14px auto 0; width:100%">Annullér</button>
         </div>
         <div class="chips" id="chips"></div>
         <div class="sortrow">
@@ -1302,7 +1312,7 @@ gameskill:
       <script>
       'use strict';
       /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-      const APP_VERSION = 7;
+      const APP_VERSION = 8;
       /* ================= Min Bogreol ================= */
 
       const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1857,18 +1867,17 @@ gameskill:
         $('isbnManual').value = '';
         handleIsbn(isbn);
       });
-      async function startScan() {
-        showAddSub('scan');
-        $('reader').innerHTML = '<div class="center" style="color:#fff; padding:40px 10px"><span class="spin"></span> Starter kamera…</div>';
+      async function beginScanner(elId, onIsbn) {
+        $(elId).innerHTML = '<div class="center" style="color:#fff; padding:40px 10px"><span class="spin"></span> Starter kamera…</div>';
         try {
           await injectScript(LIB_QR);
         } catch (e) {
-          $('reader').innerHTML = '<div class="center" style="color:#fff; padding:30px 10px">Kunne ikke hente scanner-modulet (tjek internetforbindelsen). Du kan stadig indtaste ISBN herunder.</div>';
+          $(elId).innerHTML = '<div class="center" style="color:#fff; padding:30px 10px">Kunne ikke hente scanner-modulet (tjek internetforbindelsen). Du kan indtaste ISBN i stedet.</div>';
           return;
         }
         try {
-          $('reader').innerHTML = '';
-          scanner = new Html5Qrcode('reader', {
+          $(elId).innerHTML = '';
+          scanner = new Html5Qrcode(elId, {
             formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.UPC_A]
           });
           await scanner.start(
@@ -1879,14 +1888,34 @@ gameskill:
               if (!isbn) return;
               if (navigator.vibrate) navigator.vibrate(80);
               stopScan();
-              handleIsbn(isbn);
+              onIsbn(isbn);
             },
             () => {}
           );
         } catch (e) {
-          $('reader').innerHTML = '<div class="center" style="color:#fff; padding:30px 10px">Kameraet kunne ikke startes – har du givet browseren lov til at bruge kameraet? Du kan indtaste ISBN herunder i stedet.</div>';
+          $(elId).innerHTML = '<div class="center" style="color:#fff; padding:30px 10px">Kameraet kunne ikke startes – har du givet browseren lov til at bruge kameraet? Du kan indtaste ISBN i stedet.</div>';
         }
       }
+      async function startScan() {
+        showAddSub('scan');
+        beginScanner('reader', handleIsbn);
+      }
+
+      /* scan i soegefeltet: find bogen i eget bibliotek */
+      function closeSearchScan() {
+        $('searchScanOverlay').classList.remove('open');
+        stopScan();
+      }
+      $('qScan').addEventListener('click', () => {
+        $('searchScanOverlay').classList.add('open');
+        beginScanner('searchReader', isbn => {
+          closeSearchScan();
+          $('q').value = isbn;
+          renderList();
+          if (!getFiltered().length) toast('Ingen bøger i biblioteket med det ISBN');
+        });
+      });
+      $('searchScanCancel').addEventListener('click', closeSearchScan);
       function stopScan() {
         if (scanner) {
           const s = scanner; scanner = null;

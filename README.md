@@ -16,6 +16,7 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
 - ⌨️ Manuel indtastning og fritekst-søgning i bogdatabasen — indtaster du et
   ISBN, hentes cover og manglende oplysninger automatisk.
 - 🖼️ Upload dit eget cover-billede, hvis bogen ikke findes i databaserne.
+- 📷 Scan et ISBN direkte fra søgefeltet og find bogen i dit bibliotek.
 - 🔎 Hurtige filtre og sortering: forfatter, titel, serie, vurdering — ejet, læst,
   *læst men ikke købt*, ulæst, ønskeliste, hardback, paperback.
 - 📖 Pr. bog: købt/ej, format (hardback/paperback), udgave og oplag, læst (med
