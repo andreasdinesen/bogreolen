@@ -13,42 +13,43 @@ m = re.search(r'const APP_VERSION = (\d+);', index_html)
 if not m:
     sys.exit('FEJL: APP_VERSION ikke fundet i index.html')
 app_version = m.group(1)
-icon192 = base64.b64encode(open('app/public/icon-192.png', 'rb').read()).decode()
-icon512 = base64.b64encode(open('app/public/icon-512.png', 'rb').read()).decode()
 
 # --- sikkerhedstjek ---
 for name, txt in [('server.js', server_js), ('index.html', index_html)]:
     hits = set(re.findall(r'\{\{[A-Z_]+\}\}', txt))
     if hits:
         sys.exit(f'FEJL: {name} indeholder skabelon-kollisioner: {hits}')
-    for eof in ['YGG_SERVER_EOF', 'YGG_INDEX_EOF', 'YGG_ICON1_EOF', 'YGG_ICON2_EOF']:
-        if eof in txt:
-            sys.exit(f'FEJL: {name} indeholder heredoc-markøren {eof}')
+    if 'YGG_PAYLOAD_EOF' in txt:
+        sys.exit(f'FEJL: {name} indeholder heredoc-markøren YGG_PAYLOAD_EOF')
     if '\t' in txt:
         print(f'advarsel: {name} indeholder tab-tegn (ok i YAML-blokindhold)')
 
 def b64_wrap(s, width=100):
     return '\n'.join(s[i:i+width] for i in range(0, len(s), width))
 
+# Alle app-filer pakkes som gzippet tar (base64) - panelet koerer install-scriptet som ETT
+# sh -c-argument, og Linux' MAX_ARG_STRLEN (~128 KiB) saetter loftet. Raa heredocs sprang
+# den graense ved v9 ("argument list too long"); komprimeret payload holder os langt under.
+import io, tarfile, gzip, time
+buf = io.BytesIO()
+with tarfile.open(fileobj=buf, mode='w') as tar:
+    for path in ['app/server.js', 'app/public/index.html', 'app/public/icon-192.png', 'app/public/icon-512.png']:
+        info = tarfile.TarInfo(path)
+        data = open(path, 'rb').read()
+        info.size = len(data)
+        info.mtime = 0
+        tar.addfile(info, io.BytesIO(data))
+payload = base64.b64encode(gzip.compress(buf.getvalue(), 9, mtime=0)).decode()
+
 install_script = f"""set -eu
 echo "Installerer Min Bogreol ..."
+
+# App-filerne ligger som gzippet tar-arkiv (base64) - se build_rune.py
+base64 -d <<'YGG_PAYLOAD_EOF' | gunzip | tar x
+{b64_wrap(payload)}
+YGG_PAYLOAD_EOF
+
 mkdir -p app/public/libs
-
-cat > app/server.js <<'YGG_SERVER_EOF'
-{server_js.rstrip()}
-YGG_SERVER_EOF
-
-cat > app/public/index.html <<'YGG_INDEX_EOF'
-{index_html.rstrip()}
-YGG_INDEX_EOF
-
-base64 -d > app/public/icon-192.png <<'YGG_ICON1_EOF'
-{b64_wrap(icon192)}
-YGG_ICON1_EOF
-
-base64 -d > app/public/icon-512.png <<'YGG_ICON2_EOF'
-{b64_wrap(icon512)}
-YGG_ICON2_EOF
 
 # Stregkode-scanneren hentes lokalt, saa appen ikke afhaenger af CDN paa telefonen.
 # Fejler download, falder appen selv tilbage til CDN ved brug.
@@ -58,6 +59,10 @@ wget -q -O app/public/libs/html5-qrcode.min.js https://cdn.jsdelivr.net/npm/html
 node --version
 echo "Min Bogreol er installeret."
 """
+
+assert len(install_script) < 110_000, (
+    f'FEJL: install-scriptet er {len(install_script)} tegn - taet paa/over sh -c-graensen (~128 KiB). '
+    'Reducer payload eller split leveringen.')
 
 def indent(text, spaces):
     pad = ' ' * spaces
@@ -123,8 +128,14 @@ g = doc['gameskill']
 assert g['id'] == 'bogreol' and g['docker']['image'] and g['startup']['command']
 assert g['ports'][0]['name'] == 'web' and g['ports'][0]['protocol'] == 'tcp'
 script = g['install']['script']
-assert 'YGG_SERVER_EOF' in script and script.count('YGG_SERVER_EOF') == 2
+assert script.count('YGG_PAYLOAD_EOF') == 2
+# Rundtur: dekod payloaden fra scriptet og verificer, at filerne er byte-identiske med kilderne
+_m = re.search(r"\| gunzip \| tar x\n(.*?)\nYGG_PAYLOAD_EOF", script, re.S)
+_tar = tarfile.open(fileobj=io.BytesIO(gzip.decompress(base64.b64decode(_m.group(1)))))
+for _p in ['app/server.js', 'app/public/index.html', 'app/public/icon-192.png', 'app/public/icon-512.png']:
+    assert _tar.extractfile(_p).read() == open(_p, 'rb').read(), f'payload afviger for {_p}'
 assert "require('node:sqlite')" in g['startup']['command']
+print(f'install-script: {len(script)} tegn (sh -c-graense ~131072); payload verificeret byte-identisk')
 size = len(rune.encode())
 print(f'bogreol.yaml OK - {size} bytes ({size/1024:.0f} KB af max 512 KB)')
 assert size < 512 * 1024, 'for stor!'
