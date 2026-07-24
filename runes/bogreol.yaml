@@ -6,7 +6,7 @@ gameskill:
   category: "Apps"
   description: "Personligt bogbibliotek: scan ISBN, hold styr paa koebte/laeste boeger og oenskeliste. Flere brugere, passkey-login og admin-styring. Egen SQLite-database - ingen eksterne afhaengigheder."
   author: "andreas"
-  version: 5
+  version: 6
   icon: "app"
 
   docker:
@@ -1302,7 +1302,7 @@ gameskill:
       <script>
       'use strict';
       /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-      const APP_VERSION = 5;
+      const APP_VERSION = 6;
       /* ================= Min Bogreol ================= */
 
       const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
