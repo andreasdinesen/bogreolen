@@ -30,6 +30,8 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
   igen.
 - 🔤 Vælg selv, om titel eller forfatter står øverst i boglisten.
 - 🎨 Lyst/mørkt tema — følger enheden automatisk, eller vælg selv under »Mere«.
+- 🧹 Nulstil alt via panelets **Wipe**-knap: tømmer databasen (med automatisk
+  backup først), så du kan starte forfra — fx efter en fejlimport.
 
 ## Brugere og login
 

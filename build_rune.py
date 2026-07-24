@@ -106,6 +106,12 @@ gameskill:
 
   backup:
     include: []
+
+  # Wipe-knappen i panelet toemmer hele databasen (brugere + boeger) og starter forfra.
+  # backup_first sikrer, at der altid ligger en frisk backup foer sletningen.
+  wipe:
+    paths: ["bogreol.db", "bogreol.db-wal", "bogreol.db-shm"]
+    backup_first: true
 """
 
 with open('runes/bogreol.yaml', 'w', encoding='utf-8') as f:
