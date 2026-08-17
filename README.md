@@ -35,6 +35,32 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
 - 🎨 Lyst/mørkt tema — følger enheden automatisk, eller vælg selv under »Mere«.
 - 🧹 Nulstil alt via panelets **Wipe**-knap: tømmer databasen (med automatisk
   backup først), så du kan starte forfra — fx efter en fejlimport.
+- 🔤 Bogstavs-oversigt i højre kant ved forfatter-/titelsortering — klik for at hoppe.
+- 📱 Sidemenuen kan foldes væk (og er altid en overlay-menu på telefon og tablet).
+- 🤖 **MCP-server til Claude** — lad Claude søge i, tilføje og opdatere dine bøger
+  (se nedenfor).
+
+## Adgang for Claude (MCP)
+
+Under **⚙️ Mere → 🤖 Adgang for Claude (MCP)** kan du give Claude adgang til dit
+bibliotek. Claude kan så fx svare på »har jeg læst noget af Jussi Adler-Olsen?«,
+tilføje bøger du nævner (med opslag i bibliotek.dk), markere bøger som læst/udlånt,
+og lave statistik. Der er to veje ind:
+
+- **Claude Code / Claude Desktop** — opret en *adgangsnøgle* (vælg »kun læse« eller
+  »læse og skrive«). Nøglen vises **én gang**; siden viser en færdig kommando:
+  ```sh
+  claude mcp add --transport http bogreol https://DIT-DOMÆNE/mcp --header "Authorization: Bearer br_…"
+  ```
+- **claude.ai i browseren** — tilføj en connector med adressen `https://DIT-DOMÆNE/mcp`.
+  Claude sender dig til Bogreolens login/samtykkeside; når du har sagt ja, står appen
+  under »Forbundne apps«, hvor du altid kan fjerne den igen. (Kræver https — brug dit
+  domæne bag proxyen, ikke panelets IP:port.)
+
+Nøgler og forbindelser gælder kun din egen bruger og kan tilbagekaldes med det samme.
+En nøgle kan aldrig skifte kodeord, oprette nye nøgler eller administrere brugere —
+det kræver login i appen. Sikkerhedshændelser (mislykkede logins) vises i panelets
+sikkerhedshistorik.
 
 ## Brugere og login
 
@@ -58,11 +84,20 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
 
 Alternativt: hent `runes/bogreol.yaml` og upload den under **Runes → Carve a rune**.
 
+### Opdatering
+
+1. **Runes → Browse GitHub → Reload** henter den nye rune-definition.
+2. På serveren: tryk **»Opdater Min Bogreol«** (runens egen knap) — den skifter
+   app-filerne ud og lader databasen stå. (Update/Reinstall virker også.)
+
+Samme knap bruges, hvis du skifter `NODE_IMAGE` for at få en nyere Node-version.
+
 ## Variabler
 
 | Variabel | Betydning | Standard |
 |---|---|---|
 | `APP_NAME` | Appens navn i titel/login | `Min Bogreol` |
+| `NODE_IMAGE` | Docker-image (Node-version) appen kører på — skift fx til `node:24.9.0-alpine` ved en CVE og tryk »Opdater« | `node:24-alpine` |
 
 ## Data og backup
 
@@ -78,12 +113,14 @@ pege på den port, yggdrasil har tildelt serveren.
 
 ## Byg runen selv
 
-`runes/bogreol.yaml` er genereret af `build_rune.py`, som indlejrer `app/server.js`
-og `app/public/index.html` i runens install-script:
+`runes/bogreol.yaml` er genereret af `build_rune.py`, som pakker `app/` (server,
+MCP- og OAuth-modul, frontend, ikoner) som brotli-komprimeret tar i runens install-
+og opdaterings-script og verificerer payloaden byte for byte:
 
 ```sh
-python3 build_rune.py   # skriver runes/bogreol.yaml
+python3 build_rune.py   # skriver runes/bogreol.yaml (kræver PyYAML og node)
 ```
 
 Serveren er ren Node.js (>= 22) uden afhængigheder og bruger det indbyggede
-`node:sqlite`-modul. Runtime-image: `node:24-alpine`.
+`node:sqlite`-modul. MCP-serveren og OAuth 2.1-motoren er ligeledes håndskrevne
+(JSON-RPC 2.0 over HTTP, PKCE, roterende refresh-tokens) — ingen pakker.

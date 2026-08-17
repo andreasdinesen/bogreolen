@@ -56,8 +56,59 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `);
 
+/* Skemaaendringer efter grundskemaet: en liste af migrationer styret af PRAGMA
+ * user_version, saa en ny kolonne/tabel aldrig kraever en manuel ALTER-dans. */
+const MIGRATIONS = [
+  db => db.exec(`
+    /* Vedvarende rate-limit: in-memory nulstilles ved hver genstart, og panelet
+     * genstarter automatisk kl. 04. */
+    CREATE TABLE IF NOT EXISTS rate (bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, reset_at INTEGER NOT NULL);
+    /* Adgangsnoegler til API/MCP. OAuth-udstedte access-tokens faar IKKE deres egen
+     * tabel - de ligger her med client_id + expires_at, saa de valideres ad praecis
+     * samme vej som en haandlavet noegle. Noeglen gemmes kun som sha256. */
+    CREATE TABLE IF NOT EXISTS tokens (
+      hash TEXT PRIMARY KEY,
+      id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      client_id TEXT,
+      created_at TEXT NOT NULL,
+      expires_at INTEGER,
+      last_used_at TEXT,
+      revoked_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_tokens_user ON tokens(user_id);
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      redirect_uris TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS oauth_refresh (
+      hash TEXT PRIMARY KEY,
+      token_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      revoked_at INTEGER
+    );
+  `)
+];
+(function migrate() {
+  const cur = db.prepare('PRAGMA user_version').get().user_version || 0;
+  for (let i = cur; i < MIGRATIONS.length; i++) {
+    db.exec('BEGIN');
+    try { MIGRATIONS[i](db); db.exec(`PRAGMA user_version = ${i + 1}`); db.exec('COMMIT'); }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+    console.log(`[db] skema opdateret til version ${i + 1}`);
+  }
+})();
+
 const q = {
-  userByName: db.prepare('SELECT * FROM users WHERE username = ?'),
+  // Brugernavne sammenlignes uden hensyn til store/smaa bogstaver (login, registrering, dubletcheck).
+  userByName: db.prepare('SELECT * FROM users WHERE lower(username) = lower(?)'),
   userById: db.prepare('SELECT * FROM users WHERE id = ?'),
   userCount: db.prepare('SELECT COUNT(*) AS n FROM users'),
   adminCount: db.prepare('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1'),
@@ -141,16 +192,94 @@ function reqContext(req) {
   return { origin: proto + '://' + host, rpId: hostname, secure: proto === 'https' };
 }
 
-/* simple rate limit for login attempts */
-const attempts = new Map();
-function rateLimited(key) {
-  const now = Date.now();
-  const a = attempts.get(key) || [];
-  const recent = a.filter(t => now - t < 15 * 60e3);
-  attempts.set(key, recent);
-  return recent.length >= 15;
+/* Ruller op i panelets sikkerhedshistorik via runens events:-blok. */
+const logSecurity = msg => console.warn(`[sikkerhed] ${msg}`);
+const clientIp = req => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+
+/* Vedvarende rate-limit (tabel `rate`). rateCount = antal i vinduet; rateNote = taeller én op. */
+const rq = {
+  get: db.prepare('SELECT count, reset_at FROM rate WHERE bucket = ?'),
+  start: db.prepare('INSERT INTO rate (bucket, count, reset_at) VALUES (?,1,?) ON CONFLICT(bucket) DO UPDATE SET count = 1, reset_at = excluded.reset_at'),
+  bump: db.prepare('UPDATE rate SET count = count + 1 WHERE bucket = ?'),
+  clear: db.prepare('DELETE FROM rate WHERE bucket = ?'),
+  purge: db.prepare('DELETE FROM rate WHERE reset_at < ?')
+};
+const nowSec = () => Math.floor(Date.now() / 1000);
+function rateCount(bucket) {
+  const r = rq.get.get(bucket);
+  return r && r.reset_at > nowSec() ? r.count : 0;
 }
-function noteAttempt(key) { (attempts.get(key) || attempts.set(key, []).get(key)).push(Date.now()); }
+function rateNote(bucket, windowSec) {
+  const r = rq.get.get(bucket);
+  if (!r || r.reset_at <= nowSec()) rq.start.run(bucket, nowSec() + windowSec);
+  else rq.bump.run(bucket);
+}
+const rateClear = bucket => rq.clear.run(bucket);
+
+/* ---------------- adgangsnoegler (API/MCP) ---------------- */
+const sha256hex = s => crypto.createHash('sha256').update(String(s)).digest('hex');
+const tq = {
+  insertToken: db.prepare(`INSERT INTO tokens (hash, id, label, scope, user_id, client_id, created_at, expires_at)
+                           VALUES (?,?,?,?,?,?,?,?)`),
+  // Udloebstjekket SKAL staa i opslaget - ellers lever OAuth-tokens evigt.
+  findToken: db.prepare(`SELECT * FROM tokens WHERE hash = ? AND revoked_at IS NULL
+                         AND (expires_at IS NULL OR expires_at > ?)`),
+  touchToken: db.prepare('UPDATE tokens SET last_used_at = ? WHERE hash = ?'),
+  revokeToken: db.prepare('UPDATE tokens SET revoked_at = ? WHERE id = ? AND user_id = ?'),
+  revokeByHash: db.prepare('UPDATE tokens SET revoked_at = ? WHERE hash = ?'),
+  revokeByClient: db.prepare('UPDATE tokens SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL'),
+  // Egne noegler er dem UDEN client_id; OAuth-tokens hoerer under "forbundne apps".
+  ownKeys: db.prepare(`SELECT id, label, scope, created_at, last_used_at FROM tokens
+                       WHERE user_id = ? AND client_id IS NULL AND revoked_at IS NULL ORDER BY created_at DESC`),
+  // En registrering er ikke en forbindelse: klienten registrerer sig ved hvert forsoeg,
+  // ogsaa dem man siger nej til - derfor EXISTS paa aktive tokens.
+  connections: db.prepare(`SELECT c.id, c.name, c.created_at,
+                             (SELECT max(t.created_at) FROM tokens t WHERE t.client_id = c.id AND t.user_id = ?) AS last_token
+                           FROM oauth_clients c
+                           WHERE EXISTS (SELECT 1 FROM tokens t WHERE t.client_id = c.id AND t.user_id = ? AND t.revoked_at IS NULL)
+                           ORDER BY c.created_at DESC`),
+  insertClient: db.prepare('INSERT OR REPLACE INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?,?,?,?)'),
+  getClient: db.prepare('SELECT * FROM oauth_clients WHERE id = ?'),
+  insertRefresh: db.prepare(`INSERT INTO oauth_refresh (hash, token_id, client_id, scope, user_id, created_at)
+                             VALUES (?,?,?,?,?,?)`),
+  findRefresh: db.prepare('SELECT * FROM oauth_refresh WHERE hash = ? AND revoked_at IS NULL'),
+  revokeRefresh: db.prepare('UPDATE oauth_refresh SET revoked_at = ? WHERE hash = ?'),
+  revokeRefreshByClient: db.prepare('UPDATE oauth_refresh SET revoked_at = ? WHERE client_id = ? AND user_id = ? AND revoked_at IS NULL'),
+  sweepClients: db.prepare(`DELETE FROM oauth_clients WHERE created_at < ?
+                            AND NOT EXISTS (SELECT 1 FROM tokens t WHERE t.client_id = oauth_clients.id)`)
+};
+function nyToken(userId, label, scope, clientId, levetidSek) {
+  const raw = 'br_' + crypto.randomBytes(24).toString('base64url');
+  const id = crypto.randomBytes(8).toString('hex');
+  tq.insertToken.run(sha256hex(raw), id, label, scope, userId, clientId || null, nowIso(),
+    levetidSek ? nowSec() + levetidSek : null);
+  return { raw, id };
+}
+/* Bearer-noegle fra Authorization-headeren -> token-raekke (eller null). last_used_at
+ * skrives hoejst én gang i minuttet, saa hvert kald ikke koster en skrivning. */
+function tokenFra(req) {
+  const m = String(req.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  if (!m) return null;
+  const row = tq.findToken.get(sha256hex(m[1].trim()), nowSec());
+  if (!row) return null;
+  if (!row.last_used_at || Date.now() - Date.parse(row.last_used_at) > 60e3) tq.touchToken.run(nowIso(), row.hash);
+  return row;
+}
+/* Ét API, to slags legitimation: session-cookie ELLER Bearer-noegle. Auth-/admin-/
+ * noegle-ruterne bliver paa ren session (requireUser) - en connector maa aldrig kunne
+ * administrere sig selv. */
+function godkend(req) {
+  const u = currentUser(req);
+  if (u) return { user: u, viaToken: false, scope: 'full' };
+  const t = tokenFra(req);
+  if (!t) return null;
+  const usr = q.userById.get(t.user_id);
+  if (!usr) return null;
+  return { user: usr, viaToken: true, scope: t.scope, token: t };
+}
+/* Server-hemmelighed til hmac (samtykke-CSRF) - genereres én gang. */
+if (!setting('server_secret', '')) q.setSetting.run('server_secret', crypto.randomBytes(32).toString('hex'));
+const SERVER_SECRET = setting('server_secret', '');
 
 /* ---------------- CBOR (minimal decoder) ---------------- */
 function cborDecodeFirst(buf) {
@@ -289,7 +418,8 @@ function serveStatic(res, relPath) {
     if (e) return err(res, 404, 'Ikke fundet');
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(full)] || 'application/octet-stream',
-      'Cache-Control': relPath.startsWith('libs/') ? 'public, max-age=604800' : 'no-cache',
+      // HTML altid frisk (Cloudflare cacher ikke HTML som standard, men ignorerer no-cache paa assets)
+      'Cache-Control': relPath.startsWith('libs/') ? 'public, max-age=604800' : (relPath.endsWith('.html') ? 'no-store' : 'no-cache'),
       'X-Content-Type-Options': 'nosniff'
     });
     res.end(data);
@@ -334,6 +464,240 @@ function meJson(u) {
   };
 }
 
+/* ---------------- bibliotek.dk (fælles for REST-proxy og MCP) ---------------- */
+async function bibliotekDk(query, variables) {
+  const r = await fetch('https://bibliotek.dk/api/SimpleSearch/graphql', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000),
+    body: JSON.stringify({ query, variables })
+  });
+  const j = await r.json();
+  return j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
+}
+const wSerie = w => { const s = (w.series && w.series[0]) || null; const n = s ? String(s.numberInSeries || '').match(/\d+/) : null; return { series: (s && s.title) || '', seriesNo: n ? n[0] : '' }; };
+const wIsbnOf = m => { const id = (m.identifiers || []).find(i => i.type === 'ISBN'); return id ? String(id.value).replace(/[^0-9Xx]/g, '') : ''; };
+async function lookupIsbnBibliotek(isbn) {
+  try {
+    const w = await bibliotekDk('query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ cover{ detail } identifiers{ type value } } } } } }', { q: { all: isbn } });
+    if (!w) return { found: false };
+    const mans = (w.manifestations && w.manifestations.mostRelevant) || [];
+    // fritekst-soegningen kan fuzzy-matche - kraev at vaerkets egne ISBN'er indeholder det efterspurgte
+    if (!mans.map(wIsbnOf).includes(isbn)) return { found: false };
+    const cover = mans.find(m => m.cover && m.cover.detail);
+    return Object.assign({
+      found: true, title: (w.titles && w.titles.full && w.titles.full[0]) || '',
+      authors: (w.creators || []).map(c => c.display).filter(Boolean), cover: (cover && cover.cover.detail) || ''
+    }, wSerie(w));
+  } catch (e) { return { found: false }; }
+}
+async function lookupSearchBibliotek(qtext) {
+  try {
+    const w = await bibliotekDk('query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ identifiers{ type value } materialTypes{ materialTypeGeneral{ code } } cover{ detail } } } } } }', { q: { all: qtext } });
+    if (!w) return { found: false };
+    const mans = (w.manifestations && w.manifestations.mostRelevant) || [];
+    const isBook = m => (m.materialTypes || []).some(t => t.materialTypeGeneral && t.materialTypeGeneral.code === 'BOOKS');
+    const best = mans.find(m => isBook(m) && wIsbnOf(m)) || mans.find(m => wIsbnOf(m)) || null;
+    const withCover = (best && best.cover && best.cover.detail) ? best : mans.find(m => m.cover && m.cover.detail);
+    return Object.assign({
+      found: true, title: (w.titles && w.titles.full && w.titles.full[0]) || '',
+      authors: (w.creators || []).map(c => c.display).filter(Boolean),
+      isbn: best ? wIsbnOf(best) : '', cover: (withCover && withCover.cover.detail) || ''
+    }, wSerie(w));
+  } catch (e) { return { found: false }; }
+}
+
+/* ---------------- OAuth 2.1 + MCP ---------------- */
+const APP_VERSION_TXT = (() => {
+  try { return (fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8').match(/const APP_VERSION = (\d+);/) || [])[1] || '0'; }
+  catch (e) { return '0'; }
+})();
+const oauth = require('./oauth.js').opret({
+  gemKlient: k => tq.insertClient.run(k.id, k.name, k.redirect_uris, nowSec()),
+  hentKlient: id => tq.getClient.get(id) || null,
+  udstedTokens: (clientId, scope, userId) => {
+    const t = nyToken(userId, 'Connector', scope, clientId, oauth.ADGANG_LEVETID);
+    const refresh = crypto.randomBytes(32).toString('base64url');
+    tq.insertRefresh.run(sha256hex(refresh), t.id, clientId, scope, userId, nowSec());
+    return { access_token: t.raw, token_type: 'Bearer', expires_in: oauth.ADGANG_LEVETID, refresh_token: refresh, scope };
+  },
+  findRefresh: r => tq.findRefresh.get(sha256hex(r)) || null,
+  tilbagekaldRefresh: r => tq.revokeRefresh.run(nowSec(), sha256hex(r))
+});
+/* Bogfunktioner til MCP: SAMME vej som webappen (sanitizeBook + upsert). */
+function saveBookFor(userId, raw) {
+  const b = sanitizeBook(raw);
+  if (!b || (!b.title && !b.deleted)) throw new Error('Ugyldig bog');
+  const existing = q.bookById.get(b.id);
+  if (existing && existing.user_id !== userId) throw new Error('Ikke din bog');
+  b.updatedAt = nowIso();
+  q.upsertBook.run(b.id, userId, JSON.stringify(b), b.updatedAt, b.deleted ? 1 : 0);
+  return b;
+}
+const mcp = require('./mcp.js').opret({
+  version: APP_VERSION_TXT,
+  nytId: () => crypto.randomUUID(),
+  booksFor: userId => q.booksByUser.all(userId).map(r => JSON.parse(r.data)),
+  saveBook: saveBookFor,
+  lookupIsbn: lookupIsbnBibliotek,
+  lookupSearch: lookupSearchBibliotek,
+  godkendMcp: req => { const t = tokenFra(req); if (!t) return null; const usr = q.userById.get(t.user_id); return usr ? { token: t, user: usr } : null; },
+  // "read" maa laese; "full" maa alt. tools/list filtreres med samme funktion.
+  maa: (auth, scope) => scope === 'read' ? true : auth.token.scope === 'full',
+  oauthUdfordring: req => `Bearer realm="Min Bogreol", resource_metadata="${oauth.base(req)}/.well-known/oauth-protected-resource/mcp"`,
+  readMcpBody: req => readBody(req, 1e6),
+  logError: m => console.error('[fejl] ' + m)
+});
+
+/* De offentlige OAuth-endepunkter skal kunne laeses paa tvaers af oprindelser
+ * (claude.ai henter dem fra sin egen browser), saa de gaar uden om send(). */
+function sendPublic(res, code, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+  });
+  res.end(body);
+}
+function readRaw(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', c => { size += c.length; if (size > (maxBytes || 1e6)) { reject(new Error('For stor')); req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+/* /oauth/token kaldes med form-encoding af nogle klienter og JSON af andre */
+async function readFormOrJson(req) {
+  const raw = await readRaw(req, 1e6);
+  if (String(req.headers['content-type'] || '').includes('application/json')) { try { return JSON.parse(raw || '{}'); } catch (e) { return {}; } }
+  const ud = {};
+  for (const [k, v] of new URLSearchParams(raw)) ud[k] = v;
+  return ud;
+}
+const htmlEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+/* Samtykkesiden er appens ENESTE cookie-godkendte rute uden JSON-krop og staar derfor
+ * uden for CSRF-barrieren i /api. Den faar sin egen spaerre: et skjult felt bundet til
+ * sessionscookien. Sammenlign BUFFERLAENGDER, ikke strenglaengder. */
+const consentCsrf = token => crypto.createHmac('sha256', SERVER_SECRET).update('oauth-consent:' + token).digest('hex');
+function consentCsrfOk(token, sendt) {
+  const a = Buffer.from(consentCsrf(token)), b = Buffer.from(String(sendt || ''));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+/* Samtykkesiden arver appens udseende: index.html's <style> og tema-scriptet indsaettes
+ * ordret (frontenden er én fil uden separat style.css). Ingen JavaScript ud over tema-init. */
+const INDEX_STYLE = (() => {
+  try {
+    const html = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+    return { css: (html.match(/<style>([\s\S]*?)<\/style>/) || [, ''])[1], theme: (html.match(/<script data-theme-init>[\s\S]*?<\/script>/) || [''])[0] };
+  } catch (e) { return { css: '', theme: '' }; }
+})();
+function consentSide(o, token, vaert) {
+  return `<!doctype html><html lang="da"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Giv adgang til ${htmlEsc(APP_NAME)}</title>
+${INDEX_STYLE.theme}
+<style>${INDEX_STYLE.css}</style>
+</head><body class="loggedout">
+<section class="view active" id="view-login" style="max-width:420px; margin:0 auto; padding:8vh 16px 40px">
+  <div class="loginlogo">📚</div>
+  <h1 style="text-align:center">Giv adgang?</h1>
+  <p class="loginsub"><b>${htmlEsc(o.klient.name)}</b> vil have adgang til ${htmlEsc(APP_NAME)} på ${htmlEsc(vaert)}.</p>
+  <div class="panel">
+    <div class="muted">Adgangen omfatter <b>${o.scope === 'read' ? 'kun læsning' : 'læsning og skrivning'}</b> af dit bibliotek:
+      bøger, læst/ejet/ønskeliste, udlån, vurderinger og noter. Den kan ikke skifte dit kodeord, oprette nøgler eller fjerne forbindelser.</div>
+    <form method="post" action="/oauth/authorize" style="margin-top:14px">
+      <input type="hidden" name="csrf" value="${htmlEsc(consentCsrf(token))}">
+      <input type="hidden" name="client_id" value="${htmlEsc(o.klient.id)}">
+      <input type="hidden" name="redirect_uri" value="${htmlEsc(o.redirect)}">
+      <input type="hidden" name="code_challenge" value="${htmlEsc(o.udfordring)}">
+      <input type="hidden" name="scope" value="${htmlEsc(o.scope)}">
+      <input type="hidden" name="state" value="${htmlEsc(o.state)}">
+      <button class="btn" type="submit" name="godkend" value="ja">Giv adgang</button>
+      <button class="btn sec" type="submit" name="godkend" value="nej">Afvis</button>
+    </form>
+    <div class="muted" style="margin-top:10px; font-size:0.75rem">Returadresse: ${htmlEsc(o.redirect)}</div>
+  </div>
+</section></body></html>`;
+}
+function sendHtml(res, code, html) {
+  res.writeHead(code, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(html);
+}
+const lilleSide = (code, tekst) => `<!doctype html><meta charset="utf-8"><p style="font-family:system-ui;padding:20px">${htmlEsc(tekst)}</p>`;
+
+async function oauthRute(req, res, u, p) {
+  if (req.method === 'OPTIONS') return sendPublic(res, 204, {});
+
+  if (p === '/oauth/register' && req.method === 'POST') {
+    // Saet graensen HOEJT: rammes den, findes klienten aldrig, og brugeren faar "ukendt
+    // klient" paa samtykkesiden - en fejl der peger et andet sted hen end aarsagen.
+    const key = 'oauthreg|' + clientIp(req);
+    if (rateCount(key) >= 60) return sendPublic(res, 429, { error: 'too_many_requests' });
+    rateNote(key, 3600);
+    const r = oauth.registrer(await readFormOrJson(req));
+    if (r.fejl) return sendPublic(res, 400, { error: 'invalid_redirect_uri', error_description: r.fejl });
+    return sendPublic(res, 201, r.klient);
+  }
+
+  if (p === '/oauth/authorize' && req.method === 'GET') {
+    const bruger = currentUser(req);
+    if (!bruger) {
+      // Send til login og tilbage bagefter. Frontenden whitelister stien (kun /oauth/authorize?).
+      res.writeHead(302, { Location: '/?next=' + encodeURIComponent(p + u.search) });
+      return res.end();
+    }
+    const o = oauth.tjekAutorisation(u.searchParams);
+    if (o.fejl) return sendHtml(res, 400, lilleSide(400, o.fejl));
+    return sendHtml(res, 200, consentSide(o, bruger._token, oauth.base(req).replace(/^https?:\/\//, '')));
+  }
+
+  if (p === '/oauth/authorize' && req.method === 'POST') {
+    const bruger = currentUser(req);
+    if (!bruger) return sendHtml(res, 401, lilleSide(401, 'Log ind først.'));
+    const f = await readFormOrJson(req);
+    if (!consentCsrfOk(bruger._token, f.csrf)) return sendHtml(res, 403, lilleSide(403, 'Formularen er udløbet. Prøv igen.'));
+    const qs = new URLSearchParams({
+      client_id: f.client_id || '', redirect_uri: f.redirect_uri || '', response_type: 'code',
+      code_challenge: f.code_challenge || '', code_challenge_method: 'S256', scope: f.scope || 'full', state: f.state || ''
+    });
+    const o = oauth.tjekAutorisation(qs);
+    if (o.fejl) return sendHtml(res, 400, lilleSide(400, o.fejl));
+    if (f.godkend !== 'ja') {
+      // Afvisning skal meldes tilbage, ellers staar klienten og venter paa en kode, der aldrig kommer.
+      const url = new URL(o.redirect);
+      url.searchParams.set('error', 'access_denied');
+      if (o.state) url.searchParams.set('state', o.state);
+      res.writeHead(302, { Location: url.toString() });
+      return res.end();
+    }
+    console.log(`[oauth] ${bruger.username} gav ${o.klient.name} adgang (${o.scope})`);
+    res.writeHead(302, { Location: oauth.giveTilladelse(o, bruger.id) });
+    return res.end();
+  }
+
+  if (p === '/oauth/token' && req.method === 'POST') {
+    const krop = await readFormOrJson(req);
+    let r;
+    if (krop.grant_type === 'authorization_code') r = oauth.byttKode(krop);
+    else if (krop.grant_type === 'refresh_token') r = oauth.forny(krop);
+    else return sendPublic(res, 400, { error: 'unsupported_grant_type' });
+    if (r.fejl) return sendPublic(res, 400, { error: r.fejl });
+    return sendPublic(res, 200, r);
+  }
+
+  if (p === '/oauth/revoke' && req.method === 'POST') {
+    const krop = await readFormOrJson(req);
+    const t = String(krop.token || '');
+    tq.revokeRefresh.run(nowSec(), sha256hex(t));
+    const row = tq.findToken.get(sha256hex(t), nowSec());
+    if (row) tq.revokeByHash.run(nowIso(), row.hash);
+    return sendPublic(res, 200, {});
+  }
+
+  return err(res, 404, 'Ikke fundet');
+}
+
 /* ---------------- router ---------------- */
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
@@ -355,13 +719,35 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && /^\/(libs\/[\w.\-]+|icon-\d+\.png|favicon\.ico)$/.test(p)) {
       return serveStatic(res, p.slice(1));
     }
+    /* --- MCP + OAuth (ligger uden for /api/ og har deres egen godkendelse) --- */
+    if (p === '/mcp') return await mcp.haandter(req, res);
+    // RFC 9728 haenger ressourcens sti paa, men flere klienter proever den noegne form
+    // foerst - servér begge, ellers fejler opdagelsen tavst.
+    if (req.method === 'GET' && /^\/\.well-known\/oauth-protected-resource(\/mcp)?$/.test(p)) return sendPublic(res, 200, oauth.beskyttetRessource(req));
+    if (req.method === 'GET' && /^\/\.well-known\/oauth-authorization-server(\/mcp)?$/.test(p)) return sendPublic(res, 200, oauth.serverMetadata(req));
+    if (p.startsWith('/oauth/')) return await oauthRute(req, res, u, p);
+
     if (!p.startsWith('/api/')) return err(res, 404, 'Ikke fundet');
 
     /* --- API --- */
-    const user = currentUser(req);
+    /* Ét API, to slags legitimation: session-cookie eller Bearer-noegle. Kravet om
+     * application/json er en CSRF-barriere og forudsaetter en ambient legitimation -
+     * en Bearer-noegle sendes aktivt, saa dér er der intet at forfalske. */
+    const auth = godkend(req);
+    const user = auth ? auth.user : null;
+    const viaToken = !!(auth && auth.viaToken);
     const isJson = (req.headers['content-type'] || '').includes('application/json');
-    if (req.method !== 'GET' && !isJson) return err(res, 400, 'Content-Type skal være application/json');
-    const body = req.method === 'GET' ? {} : await readBody(req);
+    if (req.method !== 'GET' && !isJson && !viaToken) return err(res, 400, 'Content-Type skal være application/json');
+    let body = {};
+    if (req.method !== 'GET') {
+      try { body = await readBody(req); } catch (e) { return err(res, 400, e.message); }
+    }
+    if (viaToken) {
+      // Noegler naar kun data-ruterne. Kodeord, passkeys, admin og noeglerne selv kraever en
+      // rigtig session - ellers er én laekket noegle nok til varig fuld adgang.
+      if (!/^\/api\/(books|lookup)(\/|$)/.test(p)) return err(res, 403, 'API-nøgler har kun adgang til bøger og opslag – log ind i appen for resten');
+      if (auth.scope !== 'full' && req.method !== 'GET') return err(res, 403, 'Denne API-nøgle er kun til læsning');
+    }
 
     /* auth */
     if (p === '/api/register' && req.method === 'POST') {
@@ -380,15 +766,26 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { me: meJson(nu), firstUser: total === 0 });
     }
     if (p === '/api/login' && req.method === 'POST') {
-      const key = (req.socket.remoteAddress || '') + '|' + String(body.username || '');
-      if (rateLimited(key)) return err(res, 429, 'For mange forsøg – prøv igen om et kvarter');
+      const ip = clientIp(req);
+      const key = 'login|' + ip + '|' + String(body.username || '').toLowerCase();
+      if (rateCount(key) >= 15) {
+        logSecurity(`login-spaerret ip=${ip}`);
+        return err(res, 429, 'For mange forsøg – prøv igen om et kvarter');
+      }
       const usr = q.userByName.get(String(body.username || '').trim());
       if (!usr || !verifyPassword(usr, String(body.password || ''))) {
-        noteAttempt(key);
+        rateNote(key, 15 * 60);
+        logSecurity(`login-fejl ip=${ip} bruger=${String(body.username || '').slice(0, 40)}`);
         return err(res, 401, 'Forkert brugernavn eller kodeord');
       }
+      rateClear(key);
       createSession(res, usr.id, ctx.secure);
       return send(res, 200, { me: meJson(usr) });
+    }
+    /* offentlig konfiguration (ingen login): skjuler registreringslinket naar registrering er lukket */
+    if (p === '/api/public-config' && req.method === 'GET') {
+      const total = q.userCount.get().n;
+      return send(res, 200, { appName: APP_NAME, allowRegistration: total === 0 || setting('allow_registration', '1') === '1' });
     }
     if (p === '/api/logout' && req.method === 'POST') {
       if (user) q.deleteSession.run(user._token);
@@ -430,6 +827,30 @@ const server = http.createServer(async (req, res) => {
     if (!user) return err(res, 401, 'Ikke logget ind');
 
     if (p === '/api/me' && req.method === 'GET') return send(res, 200, { me: meJson(user) });
+
+    /* --- adgangsnoegler og forbundne apps (kun session - en connector maa aldrig administrere sig selv) --- */
+    if (p === '/api/keys' && req.method === 'GET') {
+      return send(res, 200, { keys: tq.ownKeys.all(user.id), connections: tq.connections.all(user.id, user.id), mcpUrl: oauth.base(req) + '/mcp' });
+    }
+    if (p === '/api/keys' && req.method === 'POST') {
+      const label = String(body.label || '').trim().slice(0, 60) || 'Nøgle';
+      const scope = body.scope === 'read' ? 'read' : 'full';
+      const t = nyToken(user.id, label, scope, null, null);
+      console.log(`[noegle] ${user.username} oprettede noeglen "${label}" (${scope})`);
+      // Noeglen vises ÉN gang - den gemmes kun som sha256.
+      return send(res, 200, { token: t.raw, id: t.id, label, scope });
+    }
+    if (p === '/api/keys' && req.method === 'DELETE') {
+      tq.revokeToken.run(nowIso(), String(body.id || ''), user.id);
+      return send(res, 200, { ok: true });
+    }
+    if (p === '/api/connections' && req.method === 'DELETE') {
+      // Tilbagekaldelse skal ramme BAADE access- og refresh-tokens for klienten (kun brugerens egne).
+      const cid = String(body.clientId || '');
+      db.prepare('UPDATE tokens SET revoked_at = ? WHERE client_id = ? AND user_id = ? AND revoked_at IS NULL').run(nowIso(), cid, user.id);
+      tq.revokeRefreshByClient.run(nowSec(), cid, user.id);
+      return send(res, 200, { ok: true });
+    }
 
     if (p === '/api/password' && req.method === 'POST') {
       if (!verifyPassword(user, String(body.current || ''))) return err(res, 401, 'Nuværende kodeord er forkert');
@@ -509,85 +930,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { imported: n });
     }
 
-    /* bogopslag via bibliotek.dk (danske boeger) - API'et sender ingen CORS-headers, saa serveren proxyer */
+    /* bogopslag via bibliotek.dk (danske boeger) - API'et sender ingen CORS-headers, saa serveren proxyer.
+     * Samme funktioner bruges af MCP-vaerktoejerne lookup_isbn/search_catalog. */
     if (p.startsWith('/api/lookup/isbn/') && req.method === 'GET') {
       const isbn = decodeURIComponent(p.slice('/api/lookup/isbn/'.length)).replace(/[^0-9Xx]/g, '');
       if (isbn.length !== 10 && isbn.length !== 13) return err(res, 400, 'Ugyldigt ISBN');
-      try {
-        const r = await fetch('https://bibliotek.dk/api/SimpleSearch/graphql', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(8000),
-          body: JSON.stringify({
-            query: 'query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ cover{ detail } identifiers{ type value } } } } } }',
-            variables: { q: { all: isbn } }
-          })
-        });
-        const j = await r.json();
-        const w = j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
-        if (!w) return send(res, 200, { found: false });
-        // fritekst-soegningen kan fuzzy-matche - kraev at vaerkets egne ISBN'er indeholder det efterspurgte
-        const wIsbns = ((w.manifestations && w.manifestations.mostRelevant) || [])
-          .flatMap(m => m.identifiers || [])
-          .filter(i => i.type === 'ISBN')
-          .map(i => String(i.value).replace(/[^0-9Xx]/g, ''));
-        if (!wIsbns.includes(isbn)) return send(res, 200, { found: false });
-        const serie = (w.series && w.series[0]) || null;
-        const numMatch = serie ? String(serie.numberInSeries || '').match(/\d+/) : null;
-        const covers = (w.manifestations && w.manifestations.mostRelevant) || [];
-        const cover = covers.find(m => m.cover && m.cover.detail);
-        return send(res, 200, {
-          found: true,
-          title: (w.titles && w.titles.full && w.titles.full[0]) || '',
-          authors: (w.creators || []).map(c => c.display).filter(Boolean),
-          series: (serie && serie.title) || '',
-          seriesNo: numMatch ? numMatch[0] : '',
-          cover: (cover && cover.cover.detail) || ''
-        });
-      } catch (e) {
-        return send(res, 200, { found: false });
-      }
+      return send(res, 200, await lookupIsbnBibliotek(isbn));
     }
-
     /* fritekst-opslag (titel + forfatter) - bruges af berigelses-funktionen til boeger uden ISBN */
     if (p === '/api/lookup/search' && req.method === 'GET') {
       const qtext = String(u.searchParams.get('q') || '').trim().slice(0, 200);
       if (!qtext) return err(res, 400, 'Mangler soegetekst');
-      try {
-        const r = await fetch('https://bibliotek.dk/api/SimpleSearch/graphql', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: AbortSignal.timeout(8000),
-          body: JSON.stringify({
-            query: 'query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:1){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ identifiers{ type value } materialTypes{ materialTypeGeneral{ code } } cover{ detail } } } } } }',
-            variables: { q: { all: qtext } }
-          })
-        });
-        const j = await r.json();
-        const w = j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
-        if (!w) return send(res, 200, { found: false });
-        const mans = (w.manifestations && w.manifestations.mostRelevant) || [];
-        const isBook = m => (m.materialTypes || []).some(t => t.materialTypeGeneral && t.materialTypeGeneral.code === 'BOOKS');
-        const isbnOf = m => {
-          const id = (m.identifiers || []).find(i => i.type === 'ISBN');
-          return id ? String(id.value).replace(/[^0-9Xx]/g, '') : '';
-        };
-        const best = mans.find(m => isBook(m) && isbnOf(m)) || mans.find(m => isbnOf(m)) || null;
-        const withCover = (best && best.cover && best.cover.detail) ? best : mans.find(m => m.cover && m.cover.detail);
-        const serie = (w.series && w.series[0]) || null;
-        const num = serie ? String(serie.numberInSeries || '').match(/\d+/) : null;
-        return send(res, 200, {
-          found: true,
-          title: (w.titles && w.titles.full && w.titles.full[0]) || '',
-          authors: (w.creators || []).map(c => c.display).filter(Boolean),
-          series: (serie && serie.title) || '',
-          seriesNo: num ? num[0] : '',
-          isbn: best ? isbnOf(best) : '',
-          cover: (withCover && withCover.cover.detail) || ''
-        });
-      } catch (e) {
-        return send(res, 200, { found: false });
-      }
+      return send(res, 200, await lookupSearchBibliotek(qtext));
     }
 
     /* cover-proxy til eksport med billeder: browseren kan ikke laese cross-origin billeddata (canvas-taint) */
@@ -672,8 +1026,13 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-setInterval(() => { try { q.purgeSessions.run(nowIso()); } catch (e) {} }, 6 * 3600e3).unref();
+setInterval(() => {
+  try { q.purgeSessions.run(nowIso()); rq.purge.run(nowSec()); } catch (e) {}
+}, 6 * 3600e3).unref();
+/* Ryd OAuth-registreringer op, der aldrig blev til en forbindelse (én gang i doegnet) */
+setInterval(() => { try { tq.sweepClients.run(nowSec() - 7 * 86400); } catch (e) {} }, 24 * 3600e3).unref();
 
 server.listen(BIND_PORT, () => {
-  console.log(`${APP_NAME}: Bogreol lytter på port ${BIND_PORT} (data: ${path.join(DATA_DIR, 'bogreol.db')})`);
+  // Skriv den port der FAKTISK blev bundet - ikke oensket - saa en portfejl kan ses i loggen.
+  console.log(`${APP_NAME}: Bogreol lytter på port ${server.address().port} (data: ${path.join(DATA_DIR, 'bogreol.db')})`);
 });
