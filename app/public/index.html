@@ -298,7 +298,20 @@ nav button {
 }
 nav button .i { font-size: 1.35rem; line-height: 1.2; }
 nav button.on { color: var(--accent); }
-.navver { margin-top: auto; text-align: center; font-size: 0.68rem; color: var(--muted); padding: 2px 0; }
+.navfoot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; }
+.navver { text-align: center; font-size: 0.68rem; color: var(--muted); padding: 2px 0; }
+.userwrap { position: relative; }
+#userBtn { width: 100%; }
+#userBtn .avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.8rem; margin-bottom: 2px; }
+#userBtn.on .avatar { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--accent); }
+#userBtn .uname { max-width: 76px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usermenu { position: absolute; left: 8px; bottom: calc(100% + 4px); min-width: 190px; z-index: 60;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; }
+.usermenu button { width: 100%; flex-direction: row; justify-content: flex-start; gap: 10px; padding: 9px 10px;
+  font-size: 0.9rem; font-weight: 600; color: var(--ink); border-radius: 8px; text-align: left; }
+.usermenu button:hover { background: var(--accent-soft); }
+.usermenu button .i { font-size: 1.05rem; line-height: 1; }
 .letterhead { font-weight: 800; font-size: 0.82rem; color: var(--muted); margin: 14px 4px 6px; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
 #list .letterhead:first-child { margin-top: 2px; }
 #navUnfold {
@@ -328,7 +341,13 @@ body.navopen #navUnfold { display: none !important; }   /* menuen er aaben - kna
 .toc-item.on { color: var(--ink); }
 .toc-txt { min-width: 1.2em; text-align: center; opacity: 0.35; transition: opacity 0.14s; }
 .toc:hover .toc-txt, .toc-item.on .toc-txt { opacity: 1; }
-.letterhead { scroll-margin-top: 12px; }
+/* h2-tilstand: teksten folder ud paa hover (max-width animerer) */
+.toc:not(.letters) .toc-item { padding: 5px 6px; font-size: 0.8rem; font-weight: 600; }
+.toc:not(.letters) .toc-dash { width: 16px; }
+.toc:not(.letters) .toc-item.on .toc-dash { width: 24px; }
+.toc-tekst { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; transition: max-width 0.18s, opacity 0.14s; }
+.toc:hover .toc-tekst { max-width: 190px; opacity: 1; }
+.letterhead, .view h2 { scroll-margin-top: 16px; }
 @media (max-width: 900px) { .toc { display: none; } }
 
 /* Toast */
@@ -700,11 +719,21 @@ body.loggedout nav { display: none; }
   <button data-view="lib" class="on"><span class="i">📚</span>Bibliotek</button>
   <button data-view="add"><span class="i">➕</span>Tilføj</button>
   <button data-view="stats"><span class="i">📈</span>Statistik</button>
-  <button data-view="more"><span class="i">⚙️</span>Mere</button>
-  <div class="navver" id="navVersion"></div>
-  <button type="button" id="navLogout" title="Log ud"><span class="i">🚪</span>Log ud</button>
-  <button type="button" id="themeQuick" title="Skift mellem lyst og mørkt tema"><span class="i">🌙</span><span id="themeQuickTxt">Mørk</span></button>
-  <button type="button" id="navFold" title="Fold menuen sammen"><span class="i">◀</span><span id="navFoldTxt">Skjul</span></button>
+  <div class="navfoot">
+    <div class="navver" id="navVersion"></div>
+    <!-- Indstillinger, tema og Log ud bor i en menu paa brugerknappen (RUNE-ERFARINGER §9c):
+         to indgange til samme sted er én for meget. Menuen er forankret HER, saa den foelger
+         sidebaren, ogsaa mens den glider ind som overlay. -->
+    <div class="userwrap">
+      <button type="button" id="userBtn" title="Konto og indstillinger" aria-haspopup="menu" aria-expanded="false"><span class="avatar" id="userInitial">·</span><span class="uname" id="userName">…</span></button>
+      <div class="usermenu" id="userMenu" role="menu" hidden>
+        <button type="button" role="menuitem" id="umSettings"><span class="i">⚙️</span>Indstillinger</button>
+        <button type="button" role="menuitem" id="themeQuick" title="Skift mellem lyst og mørkt tema"><span class="i">🌙</span><span id="themeQuickTxt">Mørkt tema</span></button>
+        <button type="button" role="menuitem" id="navLogout"><span class="i">🚪</span>Log ud</button>
+      </div>
+    </div>
+    <button type="button" id="navFold" title="Fold menuen sammen"><span class="i">◀</span><span id="navFoldTxt">Skjul</span></button>
+  </div>
 </nav>
 <div class="backdrop" id="navBackdrop"></div>
 <button type="button" id="navUnfold" title="Vis menuen">☰</button>
@@ -714,7 +743,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -833,6 +862,10 @@ function showView(name) {
   if (name !== 'add') { stopScan(); }
   if (name === 'add') { showAddSub('menu'); }
   if (name === 'stats') { renderStats(); }
+  // Indstillinger naas via brugerknappen - markér den, ellers lyser intet i menuen paa den side.
+  const ub = $('userBtn');
+  ub.classList.toggle('on', name === 'more');
+  ub.setAttribute('aria-current', name === 'more' ? 'page' : 'false');
   window.scrollTo(0, 0);
   if (typeof byggToc === 'function') byggToc();
 }
@@ -862,21 +895,46 @@ $('navFold').addEventListener('click', () => {
   applyNav();
 });
 $('navUnfold').addEventListener('click', () => navOpen(true));
-$('navBackdrop').addEventListener('click', () => navOpen(false));
+$('navBackdrop').addEventListener('click', () => { navOpen(false); userMenu(false); });
+
+/* Brugermenu paa brugerknappen: Indstillinger, tema, Log ud. Lukkes ved valg, klik
+ * udenfor, Esc - og naar sidebaren foldes vaek (ellers svaever den over ingenting). */
+function userMenu(on) {
+  $('userMenu').hidden = !on;
+  $('userBtn').setAttribute('aria-expanded', on ? 'true' : 'false');
+}
+$('userBtn').addEventListener('click', e => { e.stopPropagation(); userMenu($('userMenu').hidden); });
+$('umSettings').addEventListener('click', () => { userMenu(false); showView('more'); if (navFolded || smalSkaerm()) navOpen(false); });
+document.addEventListener('click', e => { if (!e.target.closest('.userwrap')) userMenu(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') userMenu(false); });
+$('navFold').addEventListener('click', () => userMenu(false));
 /* et valg i menuen lukker overlayet igen */
 document.querySelectorAll('nav button[data-view]').forEach(b => b.addEventListener('click', () => { if (navFolded || smalSkaerm()) navOpen(false); }));
 applyNav();
 
-/* Bogstavs-oversigt i hoejre kant: bygges af .letterhead i listen (kun ved forfatter/titel-sortering). */
+/* Sideoversigt i hoejre kant (RUNE-ERFARINGER §9b): paa biblioteket ét bogstav pr.
+ * .letterhead; paa alle andre sider én streg pr. synlig h2, der folder teksten ud paa hover. */
 const tocState = { punkter: [], aktiv: -1 };
+const stripEmoji = s => { try { return s.replace(/^\s*[\p{Extended_Pictographic}️‍]+\s*/u, ''); } catch (e) { return s; } };
 function byggToc() {
   const rail = $('tocRail');
-  const iBib = $('view-lib').classList.contains('active');
-  const fundne = iBib ? [...document.querySelectorAll('#list .letterhead')] : [];
+  const view = document.querySelector('.view.active');
+  let fundne = [], bogstaver = false;
+  if (view && view.id === 'view-lib') {
+    bogstaver = true;
+    fundne = [...document.querySelectorAll('#list .letterhead')].map(el => ({ el, navn: el.textContent.trim() }));
+  } else if (view && view.id !== 'view-login') {
+    fundne = [...view.querySelectorAll('h2')].filter(el => el.offsetParent !== null).map((el, i) => {
+      if (!el.id) el.id = view.id + '-afsnit-' + i;
+      return { el, navn: stripEmoji(el.textContent).trim() || ('Afsnit ' + (i + 1)) };
+    });
+  }
   if (fundne.length < 2 || smalSkaerm()) { rail.hidden = true; rail.innerHTML = ''; tocState.punkter = []; return; }
-  tocState.punkter = fundne.map(el => ({ el, navn: el.textContent.trim() }));
-  rail.innerHTML = tocState.punkter.map((p, i) =>
-    `<button type="button" class="toc-item" data-toc="${i}" title="Hop til ${esc(p.navn)}"><span class="toc-dash"></span><span class="toc-txt">${esc(p.navn)}</span></button>`).join('');
+  tocState.punkter = fundne;
+  rail.classList.toggle('letters', bogstaver);
+  rail.innerHTML = tocState.punkter.map((p, i) => bogstaver
+    ? `<button type="button" class="toc-item" data-toc="${i}" title="Hop til ${esc(p.navn)}"><span class="toc-dash"></span><span class="toc-txt">${esc(p.navn)}</span></button>`
+    : `<button type="button" class="toc-item" data-toc="${i}" title="${esc(p.navn)}"><span class="toc-dash"></span><span class="toc-tekst">${esc(p.navn)}</span></button>`).join('');
   rail.hidden = false;
   rail.querySelectorAll('[data-toc]').forEach(el => el.addEventListener('click',
     () => tocState.punkter[Number(el.dataset.toc)].el.scrollIntoView({ behavior: 'smooth', block: 'start' })));
@@ -965,7 +1023,7 @@ function applyTheme() {
     b.classList.toggle('on', b.dataset.themeOpt === themePref));
   const isDark = themePref === 'dark' || (themePref === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
   $('themeQuick').querySelector('.i').textContent = isDark ? '☀️' : '🌙';
-  $('themeQuickTxt').textContent = isDark ? 'Lys' : 'Mørk';
+  $('themeQuickTxt').textContent = isDark ? 'Lyst tema' : 'Mørkt tema';
   $('themeQuick').title = isDark ? 'Skift til lyst tema' : 'Skift til mørkt tema';
 }
 $('themeQuick').addEventListener('click', () => {
@@ -1993,6 +2051,8 @@ $('pkAdd').addEventListener('click', async () => {
 function renderAccount() {
   if (!me) return;
   $('syncState').innerHTML = `<span class="syncdot on"></span>${esc(me.username)}`;
+  $('userInitial').textContent = (me.username || '?').slice(0, 1).toUpperCase();
+  $('userName').textContent = me.username;
   $('whoAmI').innerHTML = `Logget ind som <b>${esc(me.username)}</b>${me.isAdmin ? ' · 👑 administrator' : ''}`;
   const list = me.passkeys || [];
   $('pkList').innerHTML = list.length
