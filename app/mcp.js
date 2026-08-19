@@ -72,8 +72,11 @@ function opret(srv) {
   };
   const SORT = {
     // efternavn, derefter fornavn, derefter titel - som i appen
+    // efternavn -> fornavn -> serie i laeserraekkefoelge -> titel (som i appen)
     author: (a, b) => (lastName((a.authors || [])[0]) || 'øøø').localeCompare(lastName((b.authors || [])[0]) || 'øøø', 'da')
       || firstNames((a.authors || [])[0]).localeCompare(firstNames((b.authors || [])[0]), 'da')
+      || (a.series || a.title).localeCompare(b.series || b.title, 'da')
+      || (parseFloat(a.seriesNo) || 999) - (parseFloat(b.seriesNo) || 999)
       || a.title.localeCompare(b.title, 'da'),
     title: (a, b) => a.title.localeCompare(b.title, 'da'),
     added: (a, b) => String(b.addedAt || '').localeCompare(String(a.addedAt || '')),

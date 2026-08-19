@@ -803,7 +803,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1194,8 +1194,14 @@ function getFiltered() {
      * efternavn sammen (Jensen, Johannes V. landede midt i Jensen, Jens Henrik).
      * De to led sammenlignes hver for sig: ét samlet "Efternavn, Fornavn"-opslag
      * ville sortere Jensenius foer Jensen, fordi kommaet ignoreres i kollationen. */
+    /* Efternavn -> fornavn -> og DEREFTER serien samlet i laeserraekkefoelge.
+     * Noeglen er `serie || titel`, saa en serie staar dér, hvor seriens navn hoerer
+     * hjemme alfabetisk, mens loesrevne boeger staar ved deres egen titel. Inden i
+     * serien bestemmer nummeret - ikke titlen. */
     author: (a, b2) => (lastName((a.authors || [])[0]) || 'øøø').localeCompare(lastName((b2.authors || [])[0]) || 'øøø', 'da')
       || firstNames((a.authors || [])[0]).localeCompare(firstNames((b2.authors || [])[0]), 'da')
+      || (a.series || a.title).localeCompare(b2.series || b2.title, 'da')
+      || (parseFloat(a.seriesNo) || 999) - (parseFloat(b2.seriesNo) || 999)
       || a.title.localeCompare(b2.title, 'da'),
     title: (a, b2) => a.title.localeCompare(b2.title, 'da'),
     added: (a, b2) => (b2.addedAt || '').localeCompare(a.addedAt || ''),
