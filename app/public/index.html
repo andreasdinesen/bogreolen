@@ -803,7 +803,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 18;
+const APP_VERSION = 19;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1484,7 +1484,14 @@ $('addForm').addEventListener('submit', async e => {
   pendingPhotoCover = '';
   showView('lib');
 });
-$('formCancel').addEventListener('click', () => { pendingPhotoCover = ''; showAddSub('menu'); });
+/* Annullér skal foere tilbage, hvor man kom FRA: redigerer man en bog, hoerer man
+ * hjemme i listen (samme sted som foer, jf. libScroll) - ikke paa »Tilføj bog«,
+ * som formularen tilfaeldigvis deler side med. */
+$('formCancel').addEventListener('click', () => {
+  const redigerer = !!$('fEditId').value;
+  pendingPhotoCover = '';
+  if (redigerer) showView('lib'); else showAddSub('menu');
+});
 $('btnManual').addEventListener('click', () => openForm({ owned: true }));
 
 /* ---------- ISBN lookup ---------- */
