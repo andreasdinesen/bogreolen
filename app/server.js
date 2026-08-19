@@ -605,6 +605,7 @@ const mcp = require('./mcp.js').opret({
 
 /* Mofibo/Storytel: henter faerdiglaeste boeger ind. Samme srv-injektion som mcp/oauth,
  * saa modulet hverken kender databasen eller http'en. */
+const bogide = require('./bogide.js');
 const mofibo = require('./mofibo.js').opret({
   serverSecret: () => SERVER_SECRET,
   setting: (k, d) => setting(k, d),
@@ -1029,6 +1030,15 @@ const server = http.createServer(async (req, res) => {
         } catch (e) { /* spring en enkelt daarlig raekke over */ }
       }
       return send(res, 200, { imported: n });
+    }
+
+    /* Manuelt opslag hos Bog & idé - koeres KUN naar brugeren trykker paa knappen
+     * for én bog (se app/bogide.js om hvorfor det ikke er en fast kilde). */
+    if (p.startsWith('/api/lookup/bogide/') && req.method === 'GET') {
+      const isbn = decodeURIComponent(p.slice('/api/lookup/bogide/'.length)).replace(/[^0-9Xx]/g, '');
+      if (isbn.length !== 10 && isbn.length !== 13) return err(res, 400, 'Ugyldigt ISBN');
+      try { return send(res, 200, await bogide.hent(isbn)); }
+      catch (e) { return err(res, 502, 'Bog & idé kunne ikke kontaktes: ' + e.message); }
     }
 
     /* eget cover-billede. Versioneret URL + immutable = browseren spoerger aldrig igen,

@@ -553,7 +553,7 @@ body.loggedout nav { display: none; }
       </div>
       <div style="flex:1">
         <label style="margin-top:0">Titel *</label>
-        <input type="text" id="fTitle" required>
+        <input type="text" id="fTitle">
         <label>Forfatter(e) <span class="muted">(adskil med komma)</span></label>
         <input type="text" id="fAuthors" placeholder="fx Jussi Adler-Olsen">
       </div>
@@ -803,7 +803,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1304,11 +1304,41 @@ function syncFormRows() {
  * server-side - et link er den aerlige loesning. */
 function soegLinks(isbn) {
   const q = encodeURIComponent(isbn);
-  return `<div class="muted" style="margin-top:8px; font-size:0.8rem">Søg efter ISBN ${esc(isbn)} hos:
-    <a href="https://www.saxo.com/dk/products/search?query=${q}" target="_blank" rel="noopener">Saxo ↗</a> ·
-    <a href="https://bibliotek.dk/find?q.all=${q}" target="_blank" rel="noopener">bibliotek.dk ↗</a> ·
-    <a href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener">Google ↗</a></div>`;
+  const knap = (navn, url) => `<a class="btn small sec" style="display:inline-block; width:auto; margin:0 6px 0 0; text-decoration:none"
+    href="${url}" target="_blank" rel="noopener">${navn} ↗</a>`;
+  return `<div style="margin-top:10px">
+    <button type="button" class="btn small" data-bogide="${esc(isbn)}" style="width:auto; margin:0 0 8px">📥 Hent fra Bog &amp; idé</button>
+    <div class="muted" style="font-size:0.8rem; margin-bottom:6px">…eller søg efter ISBN ${esc(isbn)} hos:</div>
+    ${knap('Bog &amp; idé', `https://www.bog-ide.dk/search?q=${q}`)}${knap('Saxo', `https://www.saxo.com/dk/products/search?query=${q}`)}${knap('bibliotek.dk', `https://bibliotek.dk/find?q.all=${q}`)}${knap('Google', `https://www.google.com/search?q=${q}`)}
+  </div>`;
 }
+
+/* »Hent fra Bog & idé«: manuelt opslag paa ét ISBN. Udfylder kun TOMME felter -
+ * knappen er en hjaelp, ikke en overskrivning af det, brugeren selv har skrevet. */
+document.addEventListener('click', async e => {
+  const knap = e.target.closest('[data-bogide]');
+  if (!knap) return;
+  const isbn = knap.dataset.bogide;
+  const tekst = knap.textContent;
+  knap.disabled = true; knap.textContent = 'Henter fra Bog & idé…';
+  try {
+    const d = await api('/api/lookup/bogide/' + encodeURIComponent(isbn));
+    if (!d.found) { toast('Bog & idé fandt ikke bogen' + (d.grund ? ' (' + d.grund + ')' : '')); }
+    else {
+      const udfyldt = [];
+      if (!$('fTitle').value.trim() && d.title) { $('fTitle').value = d.title; udfyldt.push('titel'); }
+      if (!$('fAuthors').value.trim() && d.authors.length) { $('fAuthors').value = d.authors.join(', '); udfyldt.push('forfatter'); }
+      if (!$('fCoverUrl').value && !formCoverVer && d.cover) {
+        $('fCoverUrl').value = d.cover;
+        $('formCover').innerHTML = `<img src="${esc(d.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">`;
+        udfyldt.push('cover');
+      }
+      if (d.format && $('fOwned').checked) { $('fFormat').value = d.format; udfyldt.push('format'); }
+      toast(udfyldt.length ? '✔ Hentet fra Bog & idé: ' + udfyldt.join(', ') : 'Bogen blev fundet, men felterne var allerede udfyldt');
+    }
+  } catch (err) { toast('⚠️ ' + err.message, 5000); }
+  knap.disabled = false; knap.textContent = tekst;
+});
 
 /* ISBN slaas op ved GEM, ikke mens man taster (se addForm-submit nedenfor). */
 
@@ -1397,7 +1427,13 @@ $('addForm').addEventListener('submit', async e => {
     cover: $('fCoverUrl').value,
     coverVer: formCoverVer
   };
-  if (!data.title) return;
+  if (!data.title) {
+    // Kravet stod foer som HTML-`required`, men saa blokerede browseren Gem - og
+    // ISBN-opslaget, der netop skal hente titlen, naaede aldrig at koere.
+    $('lookupNote').innerHTML = '<div class="notice warn">Bogen skal have en titel. Skriv den, eller indtast et ISBN og tryk »Gem«, så hentes den.</div>';
+    window.scrollTo(0, 0);
+    return;
+  }
   if (!editId) {
     const dup = findByIsbn(data.isbn) || findByTitleAuthor(data.title, data.authors);
     if (dup && !$('addForm').dataset.dupwarned) {
