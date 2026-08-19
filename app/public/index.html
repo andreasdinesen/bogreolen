@@ -803,7 +803,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 16;
+const APP_VERSION = 17;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -930,7 +930,12 @@ function updateBook(id, patch) {
 }
 
 /* ---------- navigation ---------- */
+/* Hvor langt nede i biblioteket var vi? Retter man en bog og gemmer, skal man
+ * tilbage til SAMME sted i listen - ikke til toppen (RUNE-ERFARINGER §4). */
+let libScroll = 0;
 function showView(name) {
+  const aktiv = document.querySelector('.view.active');
+  if (aktiv && aktiv.id === 'view-lib') libScroll = window.scrollY;
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.view === name));
   if (name !== 'add') { stopScan(); }
@@ -940,7 +945,8 @@ function showView(name) {
   const ub = $('userBtn');
   ub.classList.toggle('on', name === 'more');
   ub.setAttribute('aria-current', name === 'more' ? 'page' : 'false');
-  window.scrollTo(0, 0);
+  // Tilbage til biblioteket: samme sted som foer. Andre sider begynder i toppen.
+  window.scrollTo(0, name === 'lib' ? libScroll : 0);
   if (typeof opdaterToTop === 'function') opdaterToTop();
   if (typeof byggToc === 'function') byggToc();
 }
@@ -1365,51 +1371,10 @@ $('fRead').addEventListener('change', () => {
   if ($('fRead').checked && !$('fReadYear').value) $('fReadYear').value = new Date().getFullYear();
   syncFormRows();
 });
-$('addForm').addEventListener('submit', async e => {
-  e.preventDefault();
-  const editId = $('fEditId').value;
-  const knap = $('formSave');
-
-  /* Er der tastet et NYT ISBN, slaar vi det op nu og henter de oplysninger, der
-   * hoerer til netop det ISBN. Bibliografien (titel, forfatter, serie, cover)
-   * erstattes - det er en anden bog/udgave - mens ejet/laest/vurdering/noter/udlaan
-   * er brugerens egne og roeres aldrig. Kan fortrydes fra beskeden bagefter. */
-  const nytIsbn = normIsbn($('fIsbn').value);
-  if (nytIsbn && nytIsbn !== formIsbnStart) {
-    const foer = { title: $('fTitle').value, authors: $('fAuthors').value, series: $('fSeries').value,
-      seriesNo: $('fSeriesNo').value, cover: $('fCoverUrl').value, coverVer: formCoverVer };
-    knap.disabled = true;
-    $('lookupNote').innerHTML = `<div class="notice info"><span class="spin"></span> Slår ISBN ${esc(nytIsbn)} op…</div>`;
-    const info = await lookupIsbn(nytIsbn);
-    knap.disabled = false;
-    formIsbnStart = nytIsbn;
-    const fundet = !!(info.title || info.authors.length || info.series);
-    if (fundet) {
-      if (info.title) $('fTitle').value = info.title;
-      if (info.authors.length) $('fAuthors').value = info.authors.join(', ');
-      if (info.series) { $('fSeries').value = info.series; $('fSeriesNo').value = info.seriesNo || ''; }
-      if (info.cover) {
-        $('fCoverUrl').value = info.cover;
-        formCoverVer = null;
-        $('formCover').innerHTML = `<img src="${esc(info.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">`;
-      }
-      $('lookupNote').innerHTML = `<div class="notice ok">✔ Oplysningerne er hentet for ISBN ${esc(nytIsbn)} – tjek dem og tryk »Gem« igen.
-        <button type="button" class="btn small sec" id="undoIsbn" style="margin-top:8px">Fortryd – behold de gamle oplysninger</button></div>`;
-      $('undoIsbn').addEventListener('click', () => {
-        $('fTitle').value = foer.title; $('fAuthors').value = foer.authors; $('fSeries').value = foer.series;
-        $('fSeriesNo').value = foer.seriesNo; $('fCoverUrl').value = foer.cover; formCoverVer = foer.coverVer;
-        const fc = coverUrl({ id: editId, cover: foer.cover, coverVer: foer.coverVer });
-        $('formCover').innerHTML = fc ? `<img src="${esc(fc)}" alt="" onerror="this.parentNode.innerHTML='📕'">` : '📕';
-        $('lookupNote').innerHTML = '<div class="notice info">De gamle oplysninger er sat tilbage. ISBN-feltet er beholdt.</div>';
-      });
-    } else {
-      $('lookupNote').innerHTML = `<div class="notice warn">ISBN ${esc(nytIsbn)} blev ikke fundet i bogdatabaserne – oplysningerne er ikke ændret. Tryk »Gem« igen for at gemme, som det står.${soegLinks(nytIsbn)}</div>`;
-    }
-    window.scrollTo(0, 0);
-    return;   // brugeren skal se resultatet og trykke Gem igen
-  }
-
-  const data = {
+/* Samler formularens felter. Personlige felter (ejet/laest/vurdering/noter/udlaan)
+ * kommer altid herfra - de roeres aldrig af et ISBN-opslag. */
+function formData() {
+  return {
     title: $('fTitle').value.trim(),
     authors: $('fAuthors').value.split(',').map(s => s.trim()).filter(Boolean),
     isbn: $('fIsbn').value.trim(),
@@ -1427,27 +1392,89 @@ $('addForm').addEventListener('submit', async e => {
     cover: $('fCoverUrl').value,
     coverVer: formCoverVer
   };
-  if (!data.title) {
-    // Kravet stod foer som HTML-`required`, men saa blokerede browseren Gem - og
-    // ISBN-opslaget, der netop skal hente titlen, naaede aldrig at koere.
-    $('lookupNote').innerHTML = '<div class="notice warn">Bogen skal have en titel. Skriv den, eller indtast et ISBN og tryk »Gem«, så hentes den.</div>';
-    window.scrollTo(0, 0);
-    return;
-  }
+}
+
+/* Gemmer formularen. Er bogen ny, huskes dens id i fEditId, saa et efterfoelgende
+ * gem (fx efter et ISBN-opslag) opdaterer den SAMME bog i stedet for at lave en til. */
+function gemFormular(data) {
+  const editId = $('fEditId').value;
   if (!editId) {
     const dup = findByIsbn(data.isbn) || findByTitleAuthor(data.title, data.authors);
     if (dup && !$('addForm').dataset.dupwarned) {
       $('addForm').dataset.dupwarned = '1';
       $('lookupNote').innerHTML = `<div class="notice warn">⚠️ <b>${esc(dup.title)}</b> ser ud til allerede at være i dit bibliotek (${dup.owned ? 'ejet' : dup.read ? 'læst' : 'på listen'}). Tryk »Gem« igen for at tilføje alligevel.</div>`;
       window.scrollTo(0, 0);
-      return;
+      return { ok: false };
     }
-    addBook(data);
-    toast('📚 »' + data.title + '« er tilføjet');
-  } else {
-    updateBook(editId, data);
-    toast('Ændringer gemt');
+    const b = addBook(data);
+    $('fEditId').value = b.id;
+    return { ok: true, id: b.id, ny: true };
   }
+  updateBook(editId, data);
+  return { ok: true, id: editId };
+}
+
+$('addForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const knap = $('formSave');
+  const nytIsbn = normIsbn($('fIsbn').value);
+  const skalSlaaOp = nytIsbn && nytIsbn !== formIsbnStart;
+
+  /* »Gem« GEMMER - altid, og med det samme. Foer laa opslaget foran med et
+   * `return`, saa foerste tryk hverken gemte et uploadet billede eller de
+   * oevrige rettelser; man skulle trykke to gange uden at vide hvorfor. */
+  let gemt = null;
+  if ($('fTitle').value.trim()) {
+    gemt = gemFormular(formData());
+    if (!gemt.ok) return;               // dublet-advarsel: brugeren trykker igen
+  } else if (!skalSlaaOp) {
+    $('lookupNote').innerHTML = '<div class="notice warn">Bogen skal have en titel. Skriv den, eller indtast et ISBN og tryk »Gem«, så hentes den.</div>';
+    window.scrollTo(0, 0);
+    return;
+  }
+
+  if (!skalSlaaOp) {
+    toast(gemt.ny ? '📚 »' + $('fTitle').value.trim() + '« er tilføjet' : 'Ændringer gemt');
+    pendingPhotoCover = '';
+    showView('lib');
+    return;
+  }
+
+  /* Nyt ISBN: hent de oplysninger, der hoerer til netop det ISBN. Bibliografien
+   * (titel, forfatter, serie, cover) erstattes - det er en anden bog/udgave. */
+  knap.disabled = true;
+  $('lookupNote').innerHTML = `<div class="notice info"><span class="spin"></span> Slår ISBN ${esc(nytIsbn)} op…</div>`;
+  const info = await lookupIsbn(nytIsbn);
+  /* Mangler der stadig noget - typisk et rigtigt cover - spoerger vi Bog & idé.
+   * Kun her, ved et aendret ISBN og et tryk paa Gem. */
+  if (!info.title || !info.authors.length || !info.coverSikker) {
+    $('lookupNote').innerHTML = `<div class="notice info"><span class="spin"></span> Tjekker Bog & idé for det, der mangler…</div>`;
+    await lookupBogide(nytIsbn, info);
+  }
+  knap.disabled = false;
+  formIsbnStart = nytIsbn;
+
+  if (!(info.title || info.authors.length || info.series)) {
+    // Bliv i formularen: herfra kan »Hent fra Bog & idé« proeves.
+    $('lookupNote').innerHTML = `<div class="notice warn">Bogen er gemt, men ISBN ${esc(nytIsbn)} blev ikke fundet i bogdatabaserne – oplysningerne er uændrede.${soegLinks(nytIsbn)}</div>`;
+    window.scrollTo(0, 0);
+    return;
+  }
+  if (info.title) $('fTitle').value = info.title;
+  if (info.authors.length) $('fAuthors').value = info.authors.join(', ');
+  if (info.series) { $('fSeries').value = info.series; $('fSeriesNo').value = info.seriesNo || ''; }
+  // udfyld ogsaa det, der blot MANGLEDE (fx udgave/oplag staar tomme, format ukendt)
+  if (info.format && $('fOwned').checked && !$('fFormat').dataset.rettet) $('fFormat').value = info.format;
+  // Et fund via ISBN vinder ALTID - ogsaa over et billede, brugeren selv har lagt paa:
+  // ISBN'et peger paa en bestemt udgave, og saa skal coveret passe til den.
+  if (info.cover) {
+    $('fCoverUrl').value = info.cover;
+    formCoverVer = null;
+    $('formCover').innerHTML = `<img src="${esc(info.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">`;
+  }
+  const nu = gemFormular(formData());
+  if (!nu.ok) return;
+  toast('Gemt · oplysninger hentet for ISBN ' + nytIsbn, 4000);
   pendingPhotoCover = '';
   showView('lib');
 });
@@ -1462,7 +1489,21 @@ async function lookupBibliotekDk(isbn, out) {
     if (!out.title && d.title) out.title = d.title;
     if (!out.authors.length && d.authors && d.authors.length) out.authors = d.authors;
     if (!out.series && d.series) { out.series = d.series; out.seriesNo = d.seriesNo || ''; }
-    if (!out.cover && d.cover) out.cover = d.cover;
+    if (!out.cover && d.cover) { out.cover = d.cover; out.coverSikker = true; }
+  } catch (e) {}
+}
+
+/* Bog & idé som sidste udvej for det, de andre ikke havde - saerligt coveret.
+ * Kaldes KUN fra gem-knappen ved et aendret ISBN (se addForm-submit), aldrig
+ * ved scanning: butikken skal ikke belastes af hvert eneste opslag. */
+async function lookupBogide(isbn, out) {
+  try {
+    const d = await fetchJson('/api/lookup/bogide/' + encodeURIComponent(isbn));
+    if (!d.found) return;
+    if (!out.title && d.title) out.title = d.title;
+    if (!out.authors.length && d.authors.length) out.authors = d.authors;
+    if (!out.coverSikker && d.cover) { out.cover = d.cover; out.coverSikker = true; }
+    if (!out.format && d.format) out.format = d.format;
   } catch (e) {}
 }
 async function lookupGoogle(isbn, out) {
@@ -1477,12 +1518,14 @@ async function lookupGoogle(isbn, out) {
       if (!out.authors.length) out.authors = v.authors || [];
       if (!out.cover && v.imageLinks && (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail)) {
         out.cover = (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail).replace(/^http:/, 'https:');
+        out.coverSikker = true;
       }
     }
   } catch (e) {}
 }
 async function lookupIsbn(isbn) {
-  const out = { isbn, title: '', authors: [], cover: '', series: '', seriesNo: '' };
+  // coverSikker = coveret er et rigtigt fund, ikke Open Librarys gaet paa en URL.
+  const out = { isbn, title: '', authors: [], cover: '', series: '', seriesNo: '', format: '', coverSikker: false };
   const danish = /^(97[89])?87/.test(isbn);
   if (danish) { await lookupBibliotekDk(isbn, out); await lookupGoogle(isbn, out); }
   else { await lookupGoogle(isbn, out); await lookupBibliotekDk(isbn, out); }

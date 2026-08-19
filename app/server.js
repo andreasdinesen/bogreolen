@@ -584,6 +584,9 @@ function saveBookFor(userId, raw) {
   const existing = q.bookById.get(b.id);
   if (existing && existing.user_id !== userId) throw new Error('Ikke din bog');
   b = udtraekCover(userId, b, raw);
+  // Har bogen ikke laengere et eget billede (fx fordi et ISBN-opslag gav et rigtigt
+  // cover), skal den gamle raekke vaek - ellers bliver den liggende for evigt.
+  if (!b.coverVer) q.deleteCover.run(b.id, userId);
   b.updatedAt = nowIso();
   q.upsertBook.run(b.id, userId, JSON.stringify(b), b.updatedAt, b.deleted ? 1 : 0);
   return b;
