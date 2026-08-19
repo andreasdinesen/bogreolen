@@ -19,6 +19,7 @@ const PROTOKOLLER = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9æøå]/g, '');
 const normIsbn = s => { const d = String(s || '').replace(/[^0-9Xx]/g, '').toUpperCase(); return d.length === 10 || d.length === 13 ? d : ''; };
+const firstNames = a => { const p = String(a || '').trim().split(/\s+/); return p.length > 1 ? p.slice(0, -1).join(' ').toLowerCase() : ''; };
 const lastName = a => { const p = String(a || '').trim().split(/\s+/); return p.length ? p[p.length - 1].toLowerCase() : ''; };
 
 function opret(srv) {
@@ -70,7 +71,10 @@ function opret(srv) {
     paperback: b => b.owned && b.format === 'paperback'
   };
   const SORT = {
-    author: (a, b) => (lastName((a.authors || [])[0]) || 'øøø').localeCompare(lastName((b.authors || [])[0]) || 'øøø', 'da') || a.title.localeCompare(b.title, 'da'),
+    // efternavn, derefter fornavn, derefter titel - som i appen
+    author: (a, b) => (lastName((a.authors || [])[0]) || 'øøø').localeCompare(lastName((b.authors || [])[0]) || 'øøø', 'da')
+      || firstNames((a.authors || [])[0]).localeCompare(firstNames((b.authors || [])[0]), 'da')
+      || a.title.localeCompare(b.title, 'da'),
     title: (a, b) => a.title.localeCompare(b.title, 'da'),
     added: (a, b) => String(b.addedAt || '').localeCompare(String(a.addedAt || '')),
     rating: (a, b) => (b.rating || 0) - (a.rating || 0) || a.title.localeCompare(b.title, 'da'),

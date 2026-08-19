@@ -803,7 +803,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -834,6 +834,7 @@ const normIsbn = s => {
   return (d.length === 13 && (d.startsWith('978') || d.startsWith('979'))) || d.length === 10 ? d : null;
 };
 const lastName = a => { const p = String(a || '').trim().split(/\s+/); return p.length ? p[p.length - 1].toLowerCase() : ''; };
+const firstNames = a => { const p = String(a || '').trim().split(/\s+/); return p.length > 1 ? p.slice(0, -1).join(' ').toLowerCase() : ''; };
 const authorLastFirst = a => {
   const p = String(a || '').trim().split(/\s+/);
   return p.length > 1 ? p[p.length - 1] + ', ' + p.slice(0, -1).join(' ') : (p[0] || '');
@@ -1183,7 +1184,13 @@ function getFiltered() {
   );
   const s = $('sort').value;
   const cmp = {
-    author: (a, b2) => (lastName((a.authors || [])[0]) || 'øøø').localeCompare(lastName((b2.authors || [])[0]) || 'øøø', 'da') || a.title.localeCompare(b2.title, 'da'),
+    /* Efternavn FOERST, derefter fornavn - ellers blandes to forfattere med samme
+     * efternavn sammen (Jensen, Johannes V. landede midt i Jensen, Jens Henrik).
+     * De to led sammenlignes hver for sig: ét samlet "Efternavn, Fornavn"-opslag
+     * ville sortere Jensenius foer Jensen, fordi kommaet ignoreres i kollationen. */
+    author: (a, b2) => (lastName((a.authors || [])[0]) || 'øøø').localeCompare(lastName((b2.authors || [])[0]) || 'øøø', 'da')
+      || firstNames((a.authors || [])[0]).localeCompare(firstNames((b2.authors || [])[0]), 'da')
+      || a.title.localeCompare(b2.title, 'da'),
     title: (a, b2) => a.title.localeCompare(b2.title, 'da'),
     added: (a, b2) => (b2.addedAt || '').localeCompare(a.addedAt || ''),
     rating: (a, b2) => (b2.rating || 0) - (a.rating || 0) || a.title.localeCompare(b2.title, 'da'),
