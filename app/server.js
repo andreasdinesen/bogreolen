@@ -603,6 +603,17 @@ const mcp = require('./mcp.js').opret({
   logError: m => console.error('[fejl] ' + m)
 });
 
+/* Mofibo/Storytel: henter faerdiglaeste boeger ind. Samme srv-injektion som mcp/oauth,
+ * saa modulet hverken kender databasen eller http'en. */
+const mofibo = require('./mofibo.js').opret({
+  serverSecret: () => SERVER_SECRET,
+  setting: (k, d) => setting(k, d),
+  setSetting: (k, v) => q.setSetting.run(k, String(v)),
+  booksFor: userId => q.booksByUser.all(userId).map(r => JSON.parse(r.data)),
+  saveBook: saveBookFor,
+  nytId: () => crypto.randomUUID()
+});
+
 /* De offentlige OAuth-endepunkter skal kunne laeses paa tvaers af oprindelser
  * (claude.ai henter dem fra sin egen browser), saa de gaar uden om send(). */
 function sendPublic(res, code, obj) {
@@ -915,6 +926,30 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    /* --- Mofibo/Storytel (kun session - her behandles brugerens kodeord) --- */
+    if (p === '/api/mofibo' && req.method === 'GET') return send(res, 200, mofibo.status(user.id));
+    if (p === '/api/mofibo' && req.method === 'POST') {
+      const email = String(body.email || '').trim();
+      const kodeord = String(body.password || '');
+      if (!email || !kodeord) return err(res, 400, 'Udfyld e-mail og kodeord');
+      try {
+        const st = await mofibo.forbind(user.id, email, kodeord, body.mode);
+        console.log(`[mofibo] ${user.username} forbandt kontoen (${st.tilstand})`);
+        return send(res, 200, st);
+      } catch (e) { return err(res, e.kode === 'login' ? 401 : 502, e.message); }
+    }
+    if (p === '/api/mofibo' && req.method === 'DELETE') return send(res, 200, mofibo.afbryd(user.id));
+    if (p === '/api/mofibo/sync' && req.method === 'POST') {
+      try {
+        const r = await mofibo.synk(user.id, body.full === true ? true : undefined);
+        console.log(`[mofibo] synk: ${r.tilfoejet} tilfoejet, ${r.opdateret} opdateret, ${r.sprunget} sprunget`);
+        return send(res, 200, Object.assign({ ok: true }, r, mofibo.status(user.id)));
+      } catch (e) {
+        q.setSetting.run('mofibo_result', JSON.stringify({ fejl: e.message }));
+        return err(res, e.kode === 'auth' || e.kode === 'login' ? 401 : 502, e.message);
+      }
+    }
+
     if (p === '/api/password' && req.method === 'POST') {
       if (!verifyPassword(user, String(body.current || ''))) return err(res, 401, 'Nuværende kodeord er forkert');
       if (!validPassword(body.password)) return err(res, 400, 'Nyt kodeord skal være mindst 8 tegn');
@@ -1114,6 +1149,26 @@ const server = http.createServer(async (req, res) => {
 setInterval(() => {
   try { q.purgeSessions.run(nowIso()); rq.purge.run(nowSec()); } catch (e) {}
 }, 6 * 3600e3).unref();
+/* Mofibo synkroniseres én gang i doegnet, saa faerdiglaeste boeger kommer ind af sig
+ * selv. Fejler den (fx udloebet adgang), gemmes fejlen og vises i panelet - den maa
+ * ALDRIG fejle tavst. Ingen boeger gaar tabt af et nedbrud: reolen er et fuldt
+ * oejebliksbillede, og vi filtrerer paa bogens eget tidsstempel. */
+async function mofiboAuto() {
+  if (!setting('mofibo_email', '')) return;
+  const ejer = db.prepare('SELECT user_id FROM books WHERE deleted = 0 ORDER BY rowid LIMIT 1').get()
+    || db.prepare('SELECT id AS user_id FROM users ORDER BY id LIMIT 1').get();
+  if (!ejer) return;
+  try {
+    const r = await mofibo.synk(ejer.user_id, undefined);
+    if (r.tilfoejet || r.opdateret) console.log(`[mofibo] auto-synk: ${r.tilfoejet} tilfoejet, ${r.opdateret} opdateret`);
+  } catch (e) {
+    q.setSetting.run('mofibo_result', JSON.stringify({ fejl: e.message }));
+    console.error('[fejl] mofibo auto-synk: ' + e.message);
+  }
+}
+setInterval(mofiboAuto, 24 * 3600e3).unref();
+setTimeout(mofiboAuto, 60e3).unref();   // ét forsoeg kort efter opstart
+
 /* Ryd OAuth-registreringer op, der aldrig blev til en forbindelse (én gang i doegnet) */
 setInterval(() => { try { tq.sweepClients.run(nowSec() - 7 * 86400); } catch (e) {} }, 24 * 3600e3).unref();
 

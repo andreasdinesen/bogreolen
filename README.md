@@ -45,6 +45,9 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
   backup først), så du kan starte forfra — fx efter en fejlimport.
 - 🔤 Bogstavs-oversigt i højre kant ved forfatter-/titelsortering — klik for at hoppe.
 - 📱 Sidemenuen kan foldes væk (og er altid en overlay-menu på telefon og tablet).
+- 🎧 **Mofibo/Storytel-integration**: hent de bøger, du har *færdiglyttet/læst*, ind
+  som »læst, men ikke ejet«. Vælg mellem alle færdiglæste (fuld synk) eller kun dem,
+  du afslutter fremover. Kører automatisk én gang i døgnet.
 - 🤖 **MCP-server til Claude** — lad Claude søge i, tilføje og opdatere dine bøger
   (se nedenfor).
 
@@ -69,6 +72,26 @@ Nøgler og forbindelser gælder kun din egen bruger og kan tilbagekaldes med det
 En nøgle kan aldrig skifte kodeord, oprette nye nøgler eller administrere brugere —
 det kræver login i appen. Sikkerhedshændelser (mislykkede logins) vises i panelets
 sikkerhedshistorik.
+
+## Mofibo / Storytel
+
+Under **⚙️ Mere → 🎧 Mofibo (Storytel)** kan du forbinde din Mofibo-konto. Appen henter
+de bøger, der står som **færdiglæste** i din Mofibo-reol, og opretter dem som *læst, men
+ikke ejet* — med årstal fra det tidspunkt, du afsluttede dem. Bøger, der allerede står i
+biblioteket, markeres blot som læst.
+
+Ved opsætningen vælger du:
+
+- **Kun bøger jeg afslutter fra nu af** — der hentes intet gammelt.
+- **Alle færdiglæste (fuld synk)** — hele din historik hentes ind. Du kan altid køre en
+  fuld synk senere med knappen.
+
+Bemærk: Storytel har ikke et officielt API, så integrationen bruger den samme vej som
+deres egne apps. Den kan derfor holde op med at virke, hvis de ændrer noget — sker det,
+siger panelet det tydeligt frem for at fejle i stilhed. Din e-mail og dit kodeord gemmes
+krypteret i din egen database (de skal bruges til at logge ind igen, når adgangen
+udløber) og sendes aldrig tilbage til browseren. »Fjern forbindelse« sletter dem.
+Bruger du Google- eller Apple-login til Storytel, virker integrationen ikke.
 
 ## Brugere og login
 

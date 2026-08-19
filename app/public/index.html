@@ -713,6 +713,32 @@ body.loggedout nav { display: none; }
   </div>
 
   <div class="panel">
+    <h2 style="margin-top:0">🎧 Mofibo (Storytel)</h2>
+    <div class="muted">Henter de bøger, du har <b>færdiglæst/lyttet</b> på Mofibo, ind i biblioteket som
+      »læst, men ikke ejet«. Synkroniseringen kører automatisk én gang i døgnet — du kan altid hente med det samme herunder.
+      Din e-mail og dit kodeord gemmes krypteret på din egen server og sendes aldrig til browseren igen.</div>
+    <div id="mofiboStatus" class="muted" style="margin-top:8px"></div>
+    <div id="mofiboForm" style="display:none">
+      <label>Mofibo/Storytel e-mail</label>
+      <input type="email" id="mfEmail" autocomplete="username">
+      <label>Kodeord</label>
+      <input type="password" id="mfPass" autocomplete="current-password">
+      <div class="muted" style="margin-top:10px">Hvad skal hentes?</div>
+      <div class="chips" style="margin-top:6px">
+        <button type="button" class="chip on" id="mfModeNye">Kun bøger jeg afslutter fra nu af</button>
+        <button type="button" class="chip" id="mfModeFuld">Alle færdiglæste (fuld synk)</button>
+      </div>
+      <button class="btn small" id="mfConnect">Forbind</button>
+      <div class="formerror" id="mfError"></div>
+    </div>
+    <div id="mofiboActions" style="display:none">
+      <button class="btn small" id="mfSync">🔄 Synkronisér nu</button>
+      <button class="btn small sec" id="mfSyncFull">Hent alle færdiglæste (fuld synk)</button>
+      <button class="btn small sec" id="mfDisconnect">Fjern forbindelse</button>
+    </div>
+  </div>
+
+  <div class="panel">
     <h2 style="margin-top:0">🔍 Berig med ISBN og covers</h2>
     <div class="muted">Slår bøger uden ISBN op på titel + forfatter (bibliotek.dk) og udfylder ISBN, cover og serie — kun tomme felter, og kun når titel og forfatter matcher. Kan stoppes og genoptages når som helst.</div>
     <button class="btn small" id="btnEnrich">Start berigelse</button>
@@ -777,7 +803,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 13;
+const APP_VERSION = 14;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1007,8 +1033,9 @@ function opdaterToTop() {
   else { el.classList.remove('vis'); el.hidden = true; }
 }
 $('toTop').addEventListener('click', () => {
+  // IKKE fokus i soegefeltet: paa en telefon ville tastaturet springe frem,
+  // og det er ikke det, man beder om, naar man vil tilbage til toppen.
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  $('q').focus({ preventScroll: true });
 });
 
 let tocVenter = false;   // én rAF pr. rulning - ellers laeses layout hundredvis af gange i sekundet
@@ -1864,6 +1891,66 @@ function renderStats() {
   $('chartFormats').innerHTML = barRows(Object.entries(byFmt).sort((a, b2) => b2[1] - a[1]));
 }
 
+/* ---------- Mofibo/Storytel ---------- */
+let mfMode = 'nye';
+function visMofibo(st) {
+  const forbundet = st && st.forbundet;
+  $('mofiboForm').style.display = forbundet ? 'none' : 'block';
+  $('mofiboActions').style.display = forbundet ? 'block' : 'none';
+  if (!forbundet) { $('mofiboStatus').textContent = 'Ikke forbundet.'; return; }
+  const dato = t => t ? new Date(t).toLocaleString('da-DK', { dateStyle: 'short', timeStyle: 'short' }) : 'aldrig';
+  let res = '';
+  try {
+    const r = JSON.parse(st.sidsteResultat || '{}');
+    res = r.fejl ? ` · <b style="color:var(--danger)">${esc(r.fejl)}</b>`
+      : (r.tilfoejet !== undefined ? ` · sidst: ${r.tilfoejet} tilføjet, ${r.opdateret} opdateret` : '');
+  } catch (e) {}
+  $('mofiboStatus').innerHTML = `Forbundet som <b>${esc(st.email)}</b> · ${st.tilstand === 'fuld' ? 'alle færdiglæste' : 'kun afsluttet efter ' + dato(st.siden)}<br>
+    Sidste synk: ${dato(st.sidsteSynk)}${res}<br>
+    <span style="font-size:0.78rem">Hentet i alt: ${st.antalHentet} · adgangsnøglen udløber: ${st.tokenUdloeb ? dato(st.tokenUdloeb) : 'ukendt'}</span>`;
+}
+async function hentMofiboStatus() {
+  try { visMofibo(await api('/api/mofibo')); } catch (e) {}
+}
+$('mfModeNye').addEventListener('click', () => { mfMode = 'nye'; $('mfModeNye').classList.add('on'); $('mfModeFuld').classList.remove('on'); });
+$('mfModeFuld').addEventListener('click', () => { mfMode = 'fuld'; $('mfModeFuld').classList.add('on'); $('mfModeNye').classList.remove('on'); });
+$('mfConnect').addEventListener('click', async () => {
+  $('mfError').textContent = '';
+  const knap = $('mfConnect'); knap.disabled = true; knap.textContent = 'Forbinder…';
+  try {
+    visMofibo(await api('/api/mofibo', { email: $('mfEmail').value, password: $('mfPass').value, mode: mfMode }));
+    $('mfPass').value = '';
+    toast('Mofibo er forbundet');
+    if (mfMode === 'fuld') mofiboSynk(true);
+  } catch (e) { $('mfError').textContent = e.message; }
+  knap.disabled = false; knap.textContent = 'Forbind';
+});
+async function mofiboSynk(fuld) {
+  const knap = fuld ? $('mfSyncFull') : $('mfSync');
+  const tekst = knap.textContent;
+  knap.disabled = true; knap.textContent = 'Henter fra Mofibo…';
+  try {
+    const r = await api('/api/mofibo/sync', fuld ? { full: true } : {});
+    visMofibo(r);
+    await loadBooks(); renderAll();
+    toast(r.tilfoejet || r.opdateret
+      ? `Mofibo: ${r.tilfoejet} tilføjet, ${r.opdateret} markeret som læst`
+      : 'Mofibo: ingen nye færdiglæste bøger');
+  } catch (e) { toast('⚠️ ' + e.message, 5000); hentMofiboStatus(); }
+  knap.disabled = false; knap.textContent = tekst;
+}
+$('mfSync').addEventListener('click', () => mofiboSynk(false));
+$('mfSyncFull').addEventListener('click', () => mofiboSynk(true));
+$('mfDisconnect').addEventListener('click', async () => {
+  if (!$('mfDisconnect').dataset.armed) {
+    $('mfDisconnect').dataset.armed = '1';
+    $('mfDisconnect').textContent = 'Tryk igen for at fjerne';
+    setTimeout(() => { delete $('mfDisconnect').dataset.armed; $('mfDisconnect').textContent = 'Fjern forbindelse'; }, 4000);
+    return;
+  }
+  try { visMofibo(await api('/api/mofibo', {}, 'DELETE')); toast('Forbindelsen er fjernet'); } catch (e) { toast('⚠️ ' + e.message); }
+});
+
 /* ---------- berigelse: slaa boeger uden ISBN op paa titel + forfatter ---------- */
 const titleMatches = (mine, theirs) => {
   const a = norm(mine), b = norm(theirs);
@@ -2188,6 +2275,7 @@ function renderAccount() {
   $('adminPanel').style.display = me.isAdmin ? 'block' : 'none';
   if (me.isAdmin) renderAdmin();
   renderKeys();
+  hentMofiboStatus();
 }
 
 /* ---------- adgangsnoegler + forbundne apps (MCP) ---------- */
