@@ -292,6 +292,33 @@ body.navfold.navopen .backdrop { display: block; }
   body:not(.loggedout) #navUnfold { display: block; }
   #navFold { display: none; }   /* ingen fastgoerelse paa en telefon */
 }
+
+/* Tilbage til toppen - dukker op, naar man er rullet et stykke ned i en lang liste. */
+#toTop {
+  position: fixed; right: 14px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 35;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card); color: var(--ink); font-size: 1.2rem; line-height: 1; box-shadow: var(--shadow);
+  opacity: 0; transform: translateY(8px); transition: opacity 0.15s, transform 0.15s;
+}
+#toTop.vis { opacity: 1; transform: none; }
+/* Paa desktop staar bogstavs-skinnen i hoejre kant - flyt knappen fri af den. */
+@media (min-width: 901px) { #toTop { right: 96px; } }
+
+/* Ny version klar: en PWA paa hjemmeskaermen genindlaeses maaske ALDRIG - den
+ * lukkes ikke, den skjules. Derfor spoerger appen serveren, hver gang den kommer
+ * frem igen, og tilbyder en genindlaesning her. */
+#updateBar {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 70; display: flex; align-items: center; gap: 10px;
+  background: var(--ink); color: var(--bg); border-radius: 999px; padding: 8px 8px 8px 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3); font-size: 0.88rem; font-weight: 600; max-width: calc(100vw - 24px);
+}
+#updateBar[hidden] { display: none; }
+#updateBar button { flex: none; border: 0; border-radius: 999px; font: inherit; font-weight: 700; padding: 7px 14px;
+  background: var(--accent); color: var(--accent-ink); white-space: nowrap; }
+/* Teksten skal kunne krympe, men aldrig klemme knapperne (flex: none ovenfor). */
+#updateTxt { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#updateBar #updateLater { background: transparent; color: var(--bg); opacity: 0.7; padding: 7px 10px; }
 nav button {
   background: none; border: none; padding: 10px 0 8px; color: var(--muted);
   font-size: 0.68rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 1px;
@@ -299,6 +326,7 @@ nav button {
 nav button .i { font-size: 1.35rem; line-height: 1.2; }
 nav button.on { color: var(--accent); }
 .navfoot { margin-top: auto; display: flex; flex-direction: column; gap: 2px; }
+.navver.ny { color: var(--accent); font-weight: 800; }
 .navver { text-align: center; font-size: 0.68rem; color: var(--muted); padding: 2px 0; }
 .userwrap { position: relative; }
 #userBtn { width: 100%; }
@@ -738,12 +766,18 @@ body.loggedout nav { display: none; }
 <div class="backdrop" id="navBackdrop"></div>
 <button type="button" id="navUnfold" title="Vis menuen">☰</button>
 <div class="toc" id="tocRail" hidden></div>
+<button type="button" id="toTop" title="Tilbage til toppen" hidden>↑</button>
+<div id="updateBar" hidden>
+  <span id="updateTxt">Ny version er klar</span>
+  <button type="button" id="updateBtn">Opdatér</button>
+  <button type="button" id="updateLater" title="Skjul indtil næste gang">✕</button>
+</div>
 
 <div id="toast"></div>
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -751,6 +785,10 @@ const LIB_TESS = ['https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesserac
 
 let books = [];
 let me = null;
+/* Version-tjek og baggrundssynk. Erklaeres HER (ikke nede ved funktionerne), fordi
+ * visNyVersion() kaldes tidligt i skallens opsaetning - `let` hoister ikke vaerdien,
+ * og en senere erklaering giver "Cannot access before initialization". */
+let nyesteServerVersion = null, sidsteVersionsTjek = 0, versionSkjult = false, sidsteSynk = 0;
 let chipSel = 'all';
 let pendingPhotoCover = '';
 
@@ -824,7 +862,16 @@ async function api(path, body, method) {
   return data;
 }
 function pushBook(b) {
-  api('/api/books', { book: b }).catch(e => toast('⚠️ Kunne ikke gemme på serveren: ' + e.message));
+  api('/api/books', { book: b }).then(d => {
+    // Sendte vi en data-URL med, har serveren lagt billedet i covers-tabellen og
+    // svarer med stemplet. Skift lokalt over paa den versionerede URL, saa den
+    // tunge streng ikke bliver liggende i hukommelsen (og i naeste eksport).
+    if (d && d.coverVer && b.coverVer !== d.coverVer) {
+      b.coverVer = d.coverVer;
+      b.cover = '';
+      renderAll();
+    }
+  }).catch(e => toast('⚠️ Kunne ikke gemme på serveren: ' + e.message));
 }
 const alive = () => books.filter(b => !b.deleted);
 const findByIsbn = isbn => { const n = normIsbn(isbn); return n ? alive().find(b => normIsbn(b.isbn) === n) : null; };
@@ -836,7 +883,7 @@ const findByTitleAuthor = (t, a) => {
 function markDirty() { renderAll(); }
 function addBook(data) {
   const b = Object.assign({
-    id: uuid(), isbn: '', title: '', authors: [], cover: '', series: '', seriesNo: '',
+    id: uuid(), isbn: '', title: '', authors: [], cover: '', coverVer: null, series: '', seriesNo: '',
     edition: '', printing: '', loaned: false, loanedTo: '', loanedAt: null,
     owned: false, format: 'paperback', read: false, readYear: null, wishlist: false,
     rating: 0, notes: '', addedAt: nowIso(), updatedAt: nowIso(), deleted: false
@@ -867,11 +914,12 @@ function showView(name) {
   ub.classList.toggle('on', name === 'more');
   ub.setAttribute('aria-current', name === 'more' ? 'page' : 'false');
   window.scrollTo(0, 0);
+  if (typeof opdaterToTop === 'function') opdaterToTop();
   if (typeof byggToc === 'function') byggToc();
 }
 document.querySelectorAll('nav button[data-view]').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
 
-$('navVersion').textContent = 'v' + APP_VERSION;
+visNyVersion(null);
 
 /* Sidemenu: paa desktop kan den foldes vaek (praeference i localStorage); foldet - eller
  * paa en smal skaerm - aabner hamburgeren den som overlay med backdrop, der IKKE skubber
@@ -949,8 +997,23 @@ function markerToc() {
   tocState.aktiv = i;
   document.querySelectorAll('[data-toc]').forEach(el => el.classList.toggle('on', Number(el.dataset.toc) === i));
 }
+/* Tilbage til toppen: vises efter ~600 px. `hidden` fjernes foerst, saa transitionen
+ * kan naa at koere; ellers springer knappen frem uden overgang. */
+function opdaterToTop() {
+  const vis = scrollY > 600;
+  const el = $('toTop');
+  if (vis && el.hidden) { el.hidden = false; requestAnimationFrame(() => el.classList.add('vis')); }
+  else if (vis) el.classList.add('vis');
+  else { el.classList.remove('vis'); el.hidden = true; }
+}
+$('toTop').addEventListener('click', () => {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  $('q').focus({ preventScroll: true });
+});
+
 let tocVenter = false;   // én rAF pr. rulning - ellers laeses layout hundredvis af gange i sekundet
 window.addEventListener('scroll', () => {
+  opdaterToTop();
   if (tocVenter || !tocState.punkter.length) return;
   tocVenter = true;
   requestAnimationFrame(() => { tocVenter = false; markerToc(); });
@@ -999,6 +1062,8 @@ try { compact = localStorage.getItem('bogreol_compact') === '1'; } catch (e) {}
 function applyCompact() {
   $('list').classList.toggle('compact', compact);
   $('compactBtn').classList.toggle('on', compact);
+  $('compactBtn').textContent = compact ? '▤ Fold ud' : '☰ Kompakt';
+  $('compactBtn').title = compact ? 'Vis covers, serier og mærkater igen' : 'Kompakt visning – titel og forfatter på én linje';
 }
 $('compactBtn').addEventListener('click', () => {
   compact = !compact;
@@ -1059,9 +1124,14 @@ $('themeChips').addEventListener('click', e => {
 });
 applyTheme();
 
+/* Egne cover-billeder ligger i covers-tabellen og hentes paa en versioneret URL.
+ * Det er dét, der goer loading="lazy" virksom - paa en data: URL gjorde den intet,
+ * fordi billedet allerede var en del af svaret (RUNE-ERFARINGER §4). */
+const coverUrl = b => b && b.coverVer ? '/api/cover/' + encodeURIComponent(b.id) + '?v=' + b.coverVer : (b && b.cover) || '';
 function coverHtml(b, cls) {
   const fallback = ['📕', '📗', '📘', '📙'][ (norm(b.title).length + (b.title||'').length) % 4 ];
-  if (b.cover) return `<div class="cover ${cls || ''}"><img src="${esc(b.cover)}" alt="" loading="lazy" onerror="this.parentNode.innerHTML='${fallback}'"></div>`;
+  const src = coverUrl(b);
+  if (src) return `<div class="cover ${cls || ''}"><img src="${esc(src)}" alt="" loading="lazy" onerror="this.parentNode.innerHTML='${fallback}'"></div>`;
   return `<div class="cover ${cls || ''}">${fallback}</div>`;
 }
 function badgesHtml(b) {
@@ -1160,6 +1230,8 @@ function renderStars(el, value, onchange) {
 
 /* ---------- add form ---------- */
 let formRating = 0;
+let formCoverVer = null;
+let formIsbnStart = '';
 function openForm(prefill, editId) {
   const p = prefill || {};
   showView('add'); showAddSub('form');
@@ -1178,10 +1250,13 @@ function openForm(prefill, editId) {
   $('fWish').checked = !!p.wishlist;
   $('fNotes').value = p.notes || '';
   $('fCoverUrl').value = p.cover || '';
+  formCoverVer = p.coverVer || null;
+  formIsbnStart = normIsbn(p.isbn || '');
   $('fEditId').value = editId || '';
   formRating = p.rating || 0;
   renderStars($('fStars'), formRating, v => formRating = v);
-  $('formCover').innerHTML = p.cover ? `<img src="${esc(p.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">` : '📕';
+  const fc = coverUrl(p);
+  $('formCover').innerHTML = fc ? `<img src="${esc(fc)}" alt="" onerror="this.parentNode.innerHTML='📕'">` : '📕';
   $('formSave').textContent = editId ? 'Gem ændringer' : 'Gem bog';
   delete $('addForm').dataset.dupwarned;
   syncFormRows();
@@ -1190,27 +1265,18 @@ function syncFormRows() {
   $('fmtRow').style.display = $('fOwned').checked ? 'flex' : 'none';
   $('yearRow').style.display = $('fRead').checked ? 'flex' : 'none';
 }
-/* ISBN indtastet i formularen -> slaa op og udfyld tomme felter (inkl. cover) */
-$('fIsbn').addEventListener('change', async () => {
-  const isbn = normIsbn($('fIsbn').value);
-  if (!isbn) return;
-  if ($('fTitle').value.trim() && $('fCoverUrl').value) return;
-  $('lookupNote').innerHTML = `<div class="notice info"><span class="spin"></span> Slår ISBN ${esc(isbn)} op…</div>`;
-  const info = await lookupIsbn(isbn);
-  if (!$('fTitle').value.trim() && info.title) $('fTitle').value = info.title;
-  if (!$('fAuthors').value.trim() && info.authors.length) $('fAuthors').value = info.authors.join(', ');
-  if (!$('fSeries').value.trim() && info.series) {
-    $('fSeries').value = info.series;
-    if (!$('fSeriesNo').value) $('fSeriesNo').value = info.seriesNo || '';
-  }
-  if (!$('fCoverUrl').value && info.cover) {
-    $('fCoverUrl').value = info.cover;
-    $('formCover').innerHTML = `<img src="${esc(info.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">`;
-  }
-  $('lookupNote').innerHTML = info.title
-    ? `<div class="notice ok">✔ Oplysninger hentet fra bogdatabasen – tomme felter er udfyldt.</div>`
-    : `<div class="notice warn">Bogen blev ikke fundet i bogdatabaserne – udfyld selv felterne (og upload evt. eget billede).</div>`;
-});
+/* Findes bogen ikke i bogdatabaserne, kan brugeren soege videre i sin EGEN browser.
+ * Saxo og William Dam ligger bag Cloudflares bot-udfordring og kan ikke hentes
+ * server-side - et link er den aerlige loesning. */
+function soegLinks(isbn) {
+  const q = encodeURIComponent(isbn);
+  return `<div class="muted" style="margin-top:8px; font-size:0.8rem">Søg efter ISBN ${esc(isbn)} hos:
+    <a href="https://www.saxo.com/dk/products/search?query=${q}" target="_blank" rel="noopener">Saxo ↗</a> ·
+    <a href="https://bibliotek.dk/find?q.all=${q}" target="_blank" rel="noopener">bibliotek.dk ↗</a> ·
+    <a href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener">Google ↗</a></div>`;
+}
+
+/* ISBN slaas op ved GEM, ikke mens man taster (se addForm-submit nedenfor). */
 
 /* upload eget cover-billede (skaleres ned og gemmes som data-URL) */
 $('fCoverUpload').addEventListener('click', () => $('fCoverFile').click());
@@ -1222,7 +1288,10 @@ $('fCoverFile').addEventListener('change', async e => {
     const img = await loadImageFile(file);
     const url = drawScaled(img, 500).toDataURL('image/jpeg', 0.82);
     if (url.length > 190000) { toast('Billedet fylder for meget – prøv et mindre'); return; }
+    // data-URL'en sendes med bogen; serveren lægger billedet i covers-tabellen
+    // og giver bogen et coverVer-stempel i stedet.
     $('fCoverUrl').value = url;
+    formCoverVer = null;
     $('formCover').innerHTML = `<img src="${url}" alt="">`;
   } catch (err) { toast('Kunne ikke læse billedet'); }
 });
@@ -1232,9 +1301,50 @@ $('fRead').addEventListener('change', () => {
   if ($('fRead').checked && !$('fReadYear').value) $('fReadYear').value = new Date().getFullYear();
   syncFormRows();
 });
-$('addForm').addEventListener('submit', e => {
+$('addForm').addEventListener('submit', async e => {
   e.preventDefault();
   const editId = $('fEditId').value;
+  const knap = $('formSave');
+
+  /* Er der tastet et NYT ISBN, slaar vi det op nu og henter de oplysninger, der
+   * hoerer til netop det ISBN. Bibliografien (titel, forfatter, serie, cover)
+   * erstattes - det er en anden bog/udgave - mens ejet/laest/vurdering/noter/udlaan
+   * er brugerens egne og roeres aldrig. Kan fortrydes fra beskeden bagefter. */
+  const nytIsbn = normIsbn($('fIsbn').value);
+  if (nytIsbn && nytIsbn !== formIsbnStart) {
+    const foer = { title: $('fTitle').value, authors: $('fAuthors').value, series: $('fSeries').value,
+      seriesNo: $('fSeriesNo').value, cover: $('fCoverUrl').value, coverVer: formCoverVer };
+    knap.disabled = true;
+    $('lookupNote').innerHTML = `<div class="notice info"><span class="spin"></span> Slår ISBN ${esc(nytIsbn)} op…</div>`;
+    const info = await lookupIsbn(nytIsbn);
+    knap.disabled = false;
+    formIsbnStart = nytIsbn;
+    const fundet = !!(info.title || info.authors.length || info.series);
+    if (fundet) {
+      if (info.title) $('fTitle').value = info.title;
+      if (info.authors.length) $('fAuthors').value = info.authors.join(', ');
+      if (info.series) { $('fSeries').value = info.series; $('fSeriesNo').value = info.seriesNo || ''; }
+      if (info.cover) {
+        $('fCoverUrl').value = info.cover;
+        formCoverVer = null;
+        $('formCover').innerHTML = `<img src="${esc(info.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'">`;
+      }
+      $('lookupNote').innerHTML = `<div class="notice ok">✔ Oplysningerne er hentet for ISBN ${esc(nytIsbn)} – tjek dem og tryk »Gem« igen.
+        <button type="button" class="btn small sec" id="undoIsbn" style="margin-top:8px">Fortryd – behold de gamle oplysninger</button></div>`;
+      $('undoIsbn').addEventListener('click', () => {
+        $('fTitle').value = foer.title; $('fAuthors').value = foer.authors; $('fSeries').value = foer.series;
+        $('fSeriesNo').value = foer.seriesNo; $('fCoverUrl').value = foer.cover; formCoverVer = foer.coverVer;
+        const fc = coverUrl({ id: editId, cover: foer.cover, coverVer: foer.coverVer });
+        $('formCover').innerHTML = fc ? `<img src="${esc(fc)}" alt="" onerror="this.parentNode.innerHTML='📕'">` : '📕';
+        $('lookupNote').innerHTML = '<div class="notice info">De gamle oplysninger er sat tilbage. ISBN-feltet er beholdt.</div>';
+      });
+    } else {
+      $('lookupNote').innerHTML = `<div class="notice warn">ISBN ${esc(nytIsbn)} blev ikke fundet i bogdatabaserne – oplysningerne er ikke ændret. Tryk »Gem« igen for at gemme, som det står.${soegLinks(nytIsbn)}</div>`;
+    }
+    window.scrollTo(0, 0);
+    return;   // brugeren skal se resultatet og trykke Gem igen
+  }
+
   const data = {
     title: $('fTitle').value.trim(),
     authors: $('fAuthors').value.split(',').map(s => s.trim()).filter(Boolean),
@@ -1250,7 +1360,8 @@ $('addForm').addEventListener('submit', e => {
     wishlist: $('fWish').checked,
     rating: formRating,
     notes: $('fNotes').value.trim(),
-    cover: $('fCoverUrl').value
+    cover: $('fCoverUrl').value,
+    coverVer: formCoverVer
   };
   if (!data.title) return;
   if (!editId) {
@@ -1334,7 +1445,7 @@ async function handleIsbn(isbn) {
     if (dup) { showExists(dup); return; }
     openForm(Object.assign({ owned: true, _note: `<div class="notice ok">✔ Bogen blev fundet i bogdatabasen – tjek oplysningerne og gem.</div>` }, info));
   } else {
-    openForm({ isbn, owned: true, cover: pendingPhotoCover, _note: `<div class="notice warn">Bogen blev ikke fundet automatisk – udfyld selv titlen og gem.</div>` });
+    openForm({ isbn, owned: true, cover: pendingPhotoCover, _note: `<div class="notice warn">Bogen blev ikke fundet automatisk – udfyld selv titlen og gem.${soegLinks(isbn)}</div>` });
   }
 }
 function showExists(b) {
@@ -1780,7 +1891,7 @@ $('btnEnrich').addEventListener('click', async () => {
       if (d.found && titleMatches(b.title, d.title) && authorMatches(b.authors, d.authors)) {
         const patch = {};
         if (d.isbn && !normIsbn(b.isbn)) patch.isbn = d.isbn;
-        if (d.cover && !b.cover) patch.cover = d.cover;
+        if (d.cover && !b.cover && !b.coverVer) patch.cover = d.cover;
         if (d.series && !b.series) { patch.series = d.series; patch.seriesNo = d.seriesNo || ''; }
         if (Object.keys(patch).length) {
           Object.assign(b, patch, { updatedAt: nowIso() });
@@ -1805,7 +1916,16 @@ function downloadFile(content, filename, mime) {
   a.click();
 }
 /* eksterne covers hentes via serverens proxy og indlejres som data-URL, saa backuppen er selvstaendig */
-async function coverToDataUrl(cover) {
+async function coverToDataUrl(cover, bog) {
+  // Eget billede: hent det direkte (same-origin, ingen proxy noedvendig).
+  if (bog && bog.coverVer) {
+    try {
+      const r = await fetch(coverUrl(bog));
+      if (!r.ok) return '';
+      const blob = await r.blob();
+      return await new Promise((res2, rej) => { const fr = new FileReader(); fr.onload = () => res2(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+    } catch (e) { return ''; }
+  }
   if (!cover || cover.startsWith('data:')) return cover;
   try {
     const r = await fetch('/api/lookup/cover?url=' + encodeURIComponent(cover));
@@ -1822,7 +1942,7 @@ $('btnExport').addEventListener('click', async () => {
   const arr = books.filter(b => !b.deleted);
   for (let i = 0; i < arr.length; i++) {
     btn.textContent = `Pakker billeder… (${i + 1}/${arr.length})`;
-    out.push(Object.assign({}, arr[i], { cover: await coverToDataUrl(arr[i].cover) }));
+    out.push(Object.assign({}, arr[i], { cover: await coverToDataUrl(arr[i].cover, arr[i]), coverVer: undefined }));
   }
   downloadFile(JSON.stringify({ app: 'bogreol', version: 1, exported: nowIso(), books: out }, null, 1),
     'bogreol-backup-' + new Date().toISOString().slice(0, 10) + '.json', 'application/json');
@@ -2186,8 +2306,74 @@ async function loadPublicConfig() {
     const c = await api('/api/public-config');
     $('showRegBtn').style.display = c.allowRegistration ? '' : 'none';
     if (!c.allowRegistration) $('regForm').style.display = 'none';
+    visNyVersion(c.version);
   } catch (e) {}
 }
+
+/* ---------- ny version paa serveren ----------
+ * Serveren melder sin egen version i /api/public-config. Er den nyere end den,
+ * denne side blev indlaest med, koerer browseren gammel kode - typisk en PWA paa
+ * hjemmeskaermen, som aldrig genindlaeses af sig selv. Vi tjekker ved opstart og
+ * hver gang appen kommer frem igen (samme trigger som doda bruger). */
+function visNyVersion(v) {
+  nyesteServerVersion = Number(v) || null;
+  const nyere = nyesteServerVersion && nyesteServerVersion > APP_VERSION;
+  $('updateBar').hidden = !(nyere && !versionSkjult);
+  // Kort tekst: den fulde sammenligning staar i sidemenuen som "v12 → v13".
+  if (nyere) $('updateTxt').textContent = `Version ${nyesteServerVersion} er klar`;
+  // versionslinjen i sidemenuen viser det samme, saa det kan ses uden banneret
+  const nv = $('navVersion');
+  nv.textContent = nyere ? `v${APP_VERSION} → v${nyesteServerVersion}` : 'v' + APP_VERSION;
+  nv.classList.toggle('ny', !!nyere);
+  nv.title = nyere ? 'Tryk for at hente den nye version' : '';
+  nv.style.cursor = nyere ? 'pointer' : '';
+}
+async function opdaterApp() {
+  // Ryd alt, der kan servere den gamle side igen, FOER genindlaesningen.
+  try {
+    if (navigator.serviceWorker) {
+      for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+    }
+    if (window.caches) await Promise.all((await caches.keys()).map(n => caches.delete(n)));
+  } catch (e) { /* uden cache-API er der ikke noget at rydde */ }
+  // Cache-buster i URL'en: nogle mobilbrowsere genbruger siden trods no-store.
+  const u = new URL(location.href);
+  u.searchParams.set('opdateret', String(Date.now()));
+  location.replace(u.toString());
+}
+/* Bøger tilføjet paa en anden enhed skal dukke op her. Appen henter derfor
+ * biblioteket igen, hver gang den kommer frem - samme trigger som version-tjekket.
+ * Er en bog aaben i detaljearket, venter vi: en gentegning under naesen paa
+ * brugeren ville lukke arket. */
+async function synkroniserBoeger(tvunget) {
+  if (!me) return;
+  if (!tvunget && Date.now() - sidsteSynk < 10e3) return;
+  if ($('overlay').classList.contains('open')) return;
+  sidsteSynk = Date.now();
+  try {
+    const foer = alive().length;
+    const d = await api('/api/books');
+    const nye = (d.books || []).length - foer;
+    books = d.books || [];
+    renderAll();
+    if (nye > 0) toast(nye === 1 ? '1 ny bog hentet' : nye + ' nye bøger hentet');
+  } catch (e) { /* offline: vi beholder det, vi har */ }
+}
+
+async function tjekVersion(tvunget) {
+  if (!tvunget && Date.now() - sidsteVersionsTjek < 60e3) return;
+  sidsteVersionsTjek = Date.now();
+  try { visNyVersion((await api('/api/public-config')).version); } catch (e) {}
+}
+$('updateBtn').addEventListener('click', opdaterApp);
+$('updateLater').addEventListener('click', () => { versionSkjult = true; $('updateBar').hidden = true; });
+$('navVersion').addEventListener('click', () => { if (nyesteServerVersion && nyesteServerVersion > APP_VERSION) opdaterApp(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  tjekVersion(false);
+  synkroniserBoeger(false);
+});
+window.addEventListener('focus', () => { tjekVersion(false); synkroniserBoeger(false); });
 /* Efter login: OAuth-samtykkesiden sender brugeren hertil med ?next=. Kun DEN sti
  * er tilladt - ellers er login-siden en aaben viderestilling. */
 function loginNext() {

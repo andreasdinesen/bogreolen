@@ -94,7 +94,39 @@ const MIGRATIONS = [
       created_at INTEGER NOT NULL,
       revoked_at INTEGER
     );
-  `)
+  `),
+  /* Egne cover-billeder ud af bog-JSON'en og over i deres egen tabel (Kokkeri §4:
+   * billeder inde i de items, listen henter, skalerer ikke). Bogen beholder kun et
+   * `coverVer`-stempel; billedet serveres paa /api/cover/<id>?v=<ver> med ETag +
+   * immutable, saa indholdet aldrig kan skifte bag om cachen. */
+  db => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS covers (
+        book_id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        mime TEXT NOT NULL,
+        bytes BLOB NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_covers_user ON covers(user_id);
+    `);
+    const ind = db.prepare('INSERT OR REPLACE INTO covers (book_id, user_id, mime, bytes, updated_at) VALUES (?,?,?,?,?)');
+    const upd = db.prepare('UPDATE books SET data = ? WHERE id = ?');
+    let n = 0;
+    for (const row of db.prepare('SELECT id, user_id, data FROM books').all()) {
+      let b;
+      try { b = JSON.parse(row.data); } catch (e) { continue; }
+      const m = typeof b.cover === 'string' && b.cover.match(/^data:([\w/+.-]+);base64,(.*)$/s);
+      if (!m) continue;
+      const nu = new Date().toISOString();
+      ind.run(row.id, row.user_id, m[1], Buffer.from(m[2], 'base64'), nu);
+      b.cover = '';
+      b.coverVer = Date.parse(nu);
+      upd.run(JSON.stringify(b), row.id);
+      n++;
+    }
+    if (n) console.log(`[db] flyttede ${n} indlejrede covers ud af bog-JSON'en`);
+  }
 ];
 (function migrate() {
   const cur = db.prepare('PRAGMA user_version').get().user_version || 0;
@@ -137,11 +169,16 @@ const q = {
     ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, deleted = excluded.deleted
     WHERE books.user_id = excluded.user_id`),
   deleteUserBooks: db.prepare('DELETE FROM books WHERE user_id = ?'),
+  insertCover: db.prepare('INSERT OR REPLACE INTO covers (book_id, user_id, mime, bytes, updated_at) VALUES (?,?,?,?,?)'),
+  getCover: db.prepare('SELECT * FROM covers WHERE book_id = ? AND user_id = ?'),
+  deleteCover: db.prepare('DELETE FROM covers WHERE book_id = ? AND user_id = ?'),
+  deleteUserCovers: db.prepare('DELETE FROM covers WHERE user_id = ?'),
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
   setSetting: db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
 };
 
 const nowIso = () => new Date().toISOString();
+const s2 = v => String(v == null ? '' : v).slice(0, 40);
 const setting = (key, dflt) => { const r = q.getSetting.get(key); return r ? r.value : dflt; };
 
 /* ---------------- helpers ---------------- */
@@ -437,7 +474,9 @@ function sanitizeBook(b) {
     isbn: s(b.isbn).slice(0, 32),
     title: s(b.title).slice(0, 500),
     authors: Array.isArray(b.authors) ? b.authors.slice(0, 10).map(a => s(a).slice(0, 200)) : [],
-    cover: String(b.cover == null ? '' : b.cover).slice(0, 200000),
+    // cover = ekstern URL. Egne billeder ligger i covers-tabellen og kendes paa coverVer.
+    cover: /^data:/.test(String(b.cover || '')) ? '' : s(b.cover).slice(0, 2000),
+    coverVer: Number.isFinite(Number(b.coverVer)) && Number(b.coverVer) > 0 ? Number(b.coverVer) : null,
     series: s(b.series).slice(0, 300),
     seriesNo: s(b.seriesNo).slice(0, 10),
     edition: s(b.edition).slice(0, 100),
@@ -522,12 +561,29 @@ const oauth = require('./oauth.js').opret({
   findRefresh: r => tq.findRefresh.get(sha256hex(r)) || null,
   tilbagekaldRefresh: r => tq.revokeRefresh.run(nowSec(), sha256hex(r))
 });
+/* Egne cover-billeder gemmes ALDRIG i bog-JSON'en (Kokkeri §4). Sendes der en
+ * data-URL med (upload, JSON-import, gammel backup), lander billedet i covers-tabellen,
+ * og bogen faar kun et coverVer-stempel. Returnerer bogen med rettede felter. */
+const COVER_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'];
+function udtraekCover(userId, b, raw) {
+  const m = typeof (raw && raw.cover) === 'string' && raw.cover.match(/^data:([\w/+.-]+);base64,(.*)$/s);
+  if (!m) return b;
+  if (!COVER_MIME.includes(m[1])) throw new Error('Ukendt billedtype');
+  const bytes = Buffer.from(m[2], 'base64');
+  if (!bytes.length) return b;
+  if (bytes.length > 400000) throw new Error('Billedet er for stort');
+  b.cover = '';
+  b.coverVer = Date.now();
+  q.insertCover.run(b.id, userId, m[1], bytes, nowIso());
+  return b;
+}
 /* Bogfunktioner til MCP: SAMME vej som webappen (sanitizeBook + upsert). */
 function saveBookFor(userId, raw) {
-  const b = sanitizeBook(raw);
+  let b = sanitizeBook(raw);
   if (!b || (!b.title && !b.deleted)) throw new Error('Ugyldig bog');
   const existing = q.bookById.get(b.id);
   if (existing && existing.user_id !== userId) throw new Error('Ikke din bog');
+  b = udtraekCover(userId, b, raw);
   b.updatedAt = nowIso();
   q.upsertBook.run(b.id, userId, JSON.stringify(b), b.updatedAt, b.deleted ? 1 : 0);
   return b;
@@ -745,7 +801,7 @@ const server = http.createServer(async (req, res) => {
     if (viaToken) {
       // Noegler naar kun data-ruterne. Kodeord, passkeys, admin og noeglerne selv kraever en
       // rigtig session - ellers er én laekket noegle nok til varig fuld adgang.
-      if (!/^\/api\/(books|lookup)(\/|$)/.test(p)) return err(res, 403, 'API-nøgler har kun adgang til bøger og opslag – log ind i appen for resten');
+      if (!/^\/api\/(books|lookup|cover)(\/|$)/.test(p)) return err(res, 403, 'API-nøgler har kun adgang til bøger og opslag – log ind i appen for resten');
       if (auth.scope !== 'full' && req.method !== 'GET') return err(res, 403, 'Denne API-nøgle er kun til læsning');
     }
 
@@ -785,7 +841,14 @@ const server = http.createServer(async (req, res) => {
     /* offentlig konfiguration (ingen login): skjuler registreringslinket naar registrering er lukket */
     if (p === '/api/public-config' && req.method === 'GET') {
       const total = q.userCount.get().n;
-      return send(res, 200, { appName: APP_NAME, allowRegistration: total === 0 || setting('allow_registration', '1') === '1' });
+      // Den version, SERVEREN udleverer. Stemmer den ikke med den APP_VERSION,
+      // browseren koerer, sidder der en gammel side i cachen (typisk en PWA paa
+      // hjemmeskaermen, der aldrig genindlaeses) - og saa skal brugeren vide det.
+      return send(res, 200, {
+        appName: APP_NAME,
+        version: Number(APP_VERSION_TXT) || 0,
+        allowRegistration: total === 0 || setting('allow_registration', '1') === '1'
+      });
     }
     if (p === '/api/logout' && req.method === 'POST') {
       if (user) q.deleteSession.run(user._token);
@@ -907,27 +970,48 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { books: rows });
     }
     if (p === '/api/books' && req.method === 'POST') {
-      const b = sanitizeBook(body.book);
-      if (!b || (!b.title && !b.deleted)) return err(res, 400, 'Ugyldig bog');
-      const existing = q.bookById.get(b.id);
-      if (existing && existing.user_id !== user.id) return err(res, 403, 'Ikke din bog');
-      b.updatedAt = nowIso();
-      q.upsertBook.run(b.id, user.id, JSON.stringify(b), b.updatedAt, b.deleted ? 1 : 0);
-      return send(res, 200, { ok: true, updatedAt: b.updatedAt });
+      let b;
+      try { b = saveBookFor(user.id, body.book); }
+      catch (e) { return err(res, e.message === 'Ikke din bog' ? 403 : 400, e.message); }
+      return send(res, 200, { ok: true, updatedAt: b.updatedAt, coverVer: b.coverVer });
     }
     if (p === '/api/books/import' && req.method === 'POST') {
       const arr = Array.isArray(body.books) ? body.books.slice(0, 5000) : null;
       if (!arr) return err(res, 400, 'Forventede { books: [...] }');
       let n = 0;
       for (const raw of arr) {
-        const b = sanitizeBook(raw);
-        if (!b || !b.title) continue;
-        const existing = q.bookById.get(b.id);
-        if (existing && existing.user_id !== user.id) continue;
-        q.upsertBook.run(b.id, user.id, JSON.stringify(b), b.updatedAt || nowIso(), b.deleted ? 1 : 0);
-        n++;
+        // Samme skrivevej som resten: en gammel backup med indlejret cover pakkes ud
+        // i covers-tabellen i stedet for at lande i bog-JSON'en igen.
+        try {
+          const b = sanitizeBook(raw);
+          if (!b || !b.title) continue;
+          const existing = q.bookById.get(b.id);
+          if (existing && existing.user_id !== user.id) continue;
+          const gemt = udtraekCover(user.id, b, raw);
+          gemt.updatedAt = s2(raw.updatedAt) || nowIso();
+          q.upsertBook.run(gemt.id, user.id, JSON.stringify(gemt), gemt.updatedAt, gemt.deleted ? 1 : 0);
+          n++;
+        } catch (e) { /* spring en enkelt daarlig raekke over */ }
       }
       return send(res, 200, { imported: n });
+    }
+
+    /* eget cover-billede. Versioneret URL + immutable = browseren spoerger aldrig igen,
+     * og listesvaret slipper for hundredtusindvis af base64-tegn. */
+    if (p.startsWith('/api/cover/') && req.method === 'GET') {
+      const id = decodeURIComponent(p.slice('/api/cover/'.length)).split('?')[0];
+      const row = q.getCover.get(id, user.id);
+      if (!row) return err(res, 404, 'Intet cover');
+      const etag = '"' + crypto.createHash('sha256').update(row.bytes).digest('hex').slice(0, 32) + '"';
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); return res.end(); }
+      res.writeHead(200, {
+        'Content-Type': row.mime,
+        'Content-Length': row.bytes.length,
+        ETag: etag,
+        'Cache-Control': 'private, max-age=31536000, immutable',
+        'X-Content-Type-Options': 'nosniff'
+      });
+      return res.end(row.bytes);
     }
 
     /* bogopslag via bibliotek.dk (danske boeger) - API'et sender ingen CORS-headers, saa serveren proxyer.
@@ -1012,6 +1096,7 @@ const server = http.createServer(async (req, res) => {
           q.deleteUserSessions.run(targetId);
           q.deleteUserCreds.run(targetId);
           q.deleteUserBooks.run(targetId);
+          q.deleteUserCovers.run(targetId);
           q.deleteUser.run(targetId);
           console.log(`[admin] ${user.username} slettede brugeren ${target.username}`);
           return send(res, 200, { ok: true });

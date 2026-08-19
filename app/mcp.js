@@ -41,7 +41,7 @@ function opret(srv) {
     edition: b.edition || '', printing: b.printing || '',
     owned: !!b.owned, format: b.owned ? (b.format || 'paperback') : null, read: !!b.read, read_year: b.readYear || null,
     wishlist: !!b.wishlist, loaned: !!b.loaned, loaned_to: b.loanedTo || '', loaned_at: b.loanedAt || null,
-    rating: b.rating || 0, notes: b.notes || '', has_cover: !!b.cover, added_at: b.addedAt, updated_at: b.updatedAt
+    rating: b.rating || 0, notes: b.notes || '', has_cover: !!(b.cover || b.coverVer), added_at: b.addedAt, updated_at: b.updatedAt
   });
 
   /* find en bog paa id, ISBN eller titel - modellen skal ikke gaette id'er */

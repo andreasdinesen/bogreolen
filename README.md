@@ -13,9 +13,17 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
 - 🖼️ **Foto af forsiden** — tekstgenkendelse finder bogen ud fra titlen.
 - 🇩🇰 Bogopslag via **bibliotek.dk** (danske bøger inkl. serier), Google Books og
   Open Library.
-- ⌨️ Manuel indtastning og fritekst-søgning i bogdatabasen — indtaster du et
-  ISBN, hentes cover og manglende oplysninger automatisk.
-- 🖼️ Upload dit eget cover-billede, hvis bogen ikke findes i databaserne.
+- ⌨️ Manuel indtastning og fritekst-søgning i bogdatabasen — skriver du et ISBN,
+  hentes titel, forfatter, serie og cover, når du trykker »Gem«.
+- 🖼️ Upload dit eget cover-billede, hvis bogen ikke findes i databaserne — det gemmes
+  som en rigtig billedfil på serveren, så listen forbliver hurtig.
+- 🔁 Retter du ISBN på en bog, henter appen ved næste »Gem« de oplysninger, der hører
+  til det nye ISBN (titel, forfatter, serie og cover) — dine egne noter, vurdering og
+  læst/ejet-status røres ikke, og du kan fortryde.
+- ⬆️ »Tilbage til toppen«-knap i lange lister.
+- 🔄 **Holder sig opdateret af sig selv**: når du åbner appen igen på telefonen,
+  henter den nye bøger tilføjet på en anden enhed — og har serveren fået en ny
+  version, kommer der en »Opdatér«-knap, så du slipper for at rydde cachen.
 - 📷 Scan et ISBN direkte fra søgefeltet og find bogen i dit bibliotek.
 - 🔍 **Berig biblioteket**: slå bøger uden ISBN op på titel + forfatter og få
   ISBN, cover og serie udfyldt automatisk (fx efter import fra regneark).
