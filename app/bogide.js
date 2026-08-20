@@ -21,7 +21,10 @@ const cifre = s => String(s || '').replace(/[^0-9Xx]/g, '').toUpperCase();
 
 /** Finder produktets handle i soegeresultatet (Shopify laegger det i sit analytics-blob). */
 function findHandle(html) {
-  const m = String(html).match(/\/products\/([a-z0-9][a-z0-9\-]{3,120})/i);
+  // Shopify-handles kan vaere meget lange (op til 255 tegn): »Karen Blixens
+  // afrikanske farm« har et paa 123. Et for lavt loft AFKORTEDE handlen, saa vi
+  // hentede en URL, der ikke fandtes - og opslaget doede med en serverfejl.
+  const m = String(html).match(/\/products\/([a-z0-9][a-z0-9\-]{2,254})/i);
   return m ? m[1] : '';
 }
 
@@ -78,7 +81,19 @@ async function hent(isbn, fetchFn) {
   const soeg = await hentTekst(`${BASE}/search?q=${encodeURIComponent(nr)}`, fetchFn);
   const handle = findHandle(soeg);
   if (!handle) return { found: false, grund: 'ingen træffer' };
-  const side = await hentTekst(`${BASE}/products/${handle}`, fetchFn);
+  let side;
+  try {
+    side = await hentTekst(`${BASE}/products/${handle}`, fetchFn);
+  } catch (e) {
+    // Fandt vi produktet i soegningen, men ikke siden, er det VORES laesning der
+    // er gaaet galt - meld det som "ikke fundet" til brugeren, og lad serverens
+    // log baere den rigtige aarsag.
+    if (/svarede 404/.test(e.message)) {
+      console.error('[fejl] bogide: produktsiden ' + handle + ' gav 404');
+      return { found: false, grund: 'produktsiden kunne ikke hentes' };
+    }
+    throw e;
+  }
   const bog = parseBook(side);
   if (!bog || !bog.title) return { found: false, grund: 'kunne ikke læse produktsiden' };
   // Samme vaern som ved bibliotek.dk: soegningen kan ramme ved siden af, saa
