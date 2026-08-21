@@ -126,7 +126,17 @@ const MIGRATIONS = [
       n++;
     }
     if (n) console.log(`[db] flyttede ${n} indlejrede covers ud af bog-JSON'en`);
-  }
+  },
+  /* Praeferencer der hoerer til BRUGEREN, ikke til enheden (fx titel/forfatter
+   * oeverst i listen). settings-tabellen er global og ville gaelde alle brugere. */
+  db => db.exec(`
+    CREATE TABLE IF NOT EXISTS prefs (
+      user_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      PRIMARY KEY (user_id, key)
+    );
+  `)
 ];
 (function migrate() {
   const cur = db.prepare('PRAGMA user_version').get().user_version || 0;
@@ -169,6 +179,9 @@ const q = {
     ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at, deleted = excluded.deleted
     WHERE books.user_id = excluded.user_id`),
   deleteUserBooks: db.prepare('DELETE FROM books WHERE user_id = ?'),
+  prefsByUser: db.prepare('SELECT key, value FROM prefs WHERE user_id = ?'),
+  setPref: db.prepare('INSERT INTO prefs (user_id, key, value) VALUES (?,?,?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value'),
+  deleteUserPrefs: db.prepare('DELETE FROM prefs WHERE user_id = ?'),
   insertCover: db.prepare('INSERT OR REPLACE INTO covers (book_id, user_id, mime, bytes, updated_at) VALUES (?,?,?,?,?)'),
   getCover: db.prepare('SELECT * FROM covers WHERE book_id = ? AND user_id = ?'),
   deleteCover: db.prepare('DELETE FROM covers WHERE book_id = ? AND user_id = ?'),
@@ -499,6 +512,8 @@ function sanitizeBook(b) {
 function meJson(u) {
   return {
     id: u.id, username: u.username, isAdmin: !!u.is_admin,
+    // Brugerens egne valg (ikke enhedens) - foelger med paa tvaers af computer og telefon.
+    prefs: Object.fromEntries(q.prefsByUser.all(u.id).map(r => [r.key, r.value])),
     passkeys: q.credsByUser.all(u.id).map(c => ({ id: c.id, label: c.label || 'Passkey', created: c.created_at }))
   };
 }
@@ -930,6 +945,16 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    /* Brugerens praeferencer (kun de kendte noegler - ikke et frit noegle/vaerdi-lager) */
+    if (p === '/api/prefs' && req.method === 'POST') {
+      const KENDTE = { listtop: ['title', 'author'] };
+      const key = String(body.key || '');
+      const value = String(body.value || '');
+      if (!KENDTE[key] || !KENDTE[key].includes(value)) return err(res, 400, 'Ukendt indstilling');
+      q.setPref.run(user.id, key, value);
+      return send(res, 200, { ok: true, prefs: meJson(user).prefs });
+    }
+
     /* --- Mofibo/Storytel (kun session - her behandles brugerens kodeord) --- */
     if (p === '/api/mofibo' && req.method === 'GET') return send(res, 200, mofibo.status(user.id));
     if (p === '/api/mofibo' && req.method === 'POST') {
@@ -1145,6 +1170,7 @@ const server = http.createServer(async (req, res) => {
           q.deleteUserCreds.run(targetId);
           q.deleteUserBooks.run(targetId);
           q.deleteUserCovers.run(targetId);
+          q.deleteUserPrefs.run(targetId);
           q.deleteUser.run(targetId);
           console.log(`[admin] ${user.username} slettede brugeren ${target.username}`);
           return send(res, 200, { ok: true });

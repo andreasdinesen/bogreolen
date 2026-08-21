@@ -803,7 +803,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1133,7 +1133,11 @@ $('themeQuick').addEventListener('click', () => {
 });
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
-/* oeverste linje i boglisten: titel eller forfatter (ren UI-praeference) */
+/* Oeverste linje i boglisten: titel eller forfatter. Det er et valg om INDHOLDET,
+ * saa den hoerer til brugeren og gemmes paa serveren (`prefs`) - modsat tema,
+ * kompakt visning og sammenfoldet menu, der handler om den enkelte skaerm og
+ * derfor bliver i localStorage. localStorage bruges her kun som hurtig lokal
+ * hukommelse, saa listen ikke naar at tegne sig forkert foer /api/me er hentet. */
 let listTop = 'title';
 try { listTop = localStorage.getItem('bogreol_listtop') === 'author' ? 'author' : 'title'; } catch (e) {}
 function applyListTop() {
@@ -1141,12 +1145,28 @@ function applyListTop() {
     b.classList.toggle('on', b.dataset.listtop === listTop));
   renderList();
 }
+/* Kaldes naar `me` er hentet: serverens valg vinder over enhedens. */
+function anvendBrugerPraeferencer() {
+  const p = (me && me.prefs) || {};
+  if (p.listtop === 'author' || p.listtop === 'title') {
+    listTop = p.listtop;
+    try { localStorage.setItem('bogreol_listtop', listTop); } catch (e) {}
+  } else if (me) {
+    // Foerste gang: loft enhedens hidtidige valg op til brugeren.
+    api('/api/prefs', { key: 'listtop', value: listTop }).catch(() => {});
+  }
+  applyListTop();
+}
 $('listTopChips').addEventListener('click', e => {
   const b = e.target.closest('[data-listtop]');
   if (!b) return;
   listTop = b.dataset.listtop;
   try { localStorage.setItem('bogreol_listtop', listTop); } catch (e2) {}
   applyListTop();
+  // Gemmes paa brugeren, saa valget ogsaa gaelder paa telefonen.
+  api('/api/prefs', { key: 'listtop', value: listTop })
+    .then(d => { if (me) me.prefs = d.prefs; })
+    .catch(() => toast('⚠️ Kunne ikke gemme indstillingen på serveren'));
 });
 applyListTop();
 $('themeChips').addEventListener('click', e => {
@@ -2242,6 +2262,7 @@ async function loadBooks() {
 }
 async function afterLogin(m) {
   me = m;
+  anvendBrugerPraeferencer();
   $('loginError').textContent = '';
   $('lPass').value = '';
   if (loginNext()) { location.href = loginNext(); return; }
@@ -2572,6 +2593,7 @@ async function init() {
   try {
     const d = await api('/api/me');
     me = d.me;
+    anvendBrugerPraeferencer();
     if (loginNext()) { location.href = loginNext(); return; }
     await loadBooks();
     renderAll();
