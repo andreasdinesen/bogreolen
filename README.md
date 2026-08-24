@@ -20,7 +20,10 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
 - 🔁 Retter du ISBN på en bog, henter appen ved næste »Gem« de oplysninger, der hører
   til det nye ISBN (titel, forfatter, serie og cover) — dine egne noter, vurdering og
   læst/ejet-status røres ikke, og du kan fortryde.
-- ⬆️ »Tilbage til toppen«-knap i lange lister.
+- ⬆️ »Tilbage til toppen«-knap i lange lister — og en knap til at folde listen
+  ind/ud ved siden af.
+- 📌 Søgefelt og filtre bliver i toppen, når du ruller; overskrift og sortering
+  folder sig sammen, så der er plads til bøgerne.
 - 🔄 **Holder sig opdateret af sig selv**: når du åbner appen igen på telefonen,
   henter den nye bøger tilføjet på en anden enhed — og har serveren fået en ny
   version, kommer der en »Opdatér«-knap, så du slipper for at rydde cachen.

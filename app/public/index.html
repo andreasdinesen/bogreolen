@@ -293,6 +293,28 @@ body.navfold.navopen .backdrop { display: block; }
   #navFold { display: none; }   /* ingen fastgoerelse paa en telefon */
 }
 
+/* Soegefelt og filtre bliver i toppen, naar der rulles (moenstret er fra sagu).
+ * `position: sticky` og ikke `fixed`: sticky beholder sin plads i flowet, saa
+ * indholdet under ikke skal have en margen, der passer praecis til hoejden.
+ * `body.rullet` saettes af en IntersectionObserver paa en usynlig vagtpost OVER
+ * bjaelken - en observer paa selve bjaelken ville aldrig fyre, for den forlader
+ * aldrig skaermen. */
+.rulvagt { height: 1px; margin: 0; padding: 0; pointer-events: none; }
+.topbar {
+  position: sticky; top: 0; z-index: 38;
+  background: var(--bg);
+  padding-top: 6px;
+  margin-left: -14px; margin-right: -14px;   /* rammer sidens vandrette padding */
+  padding-left: 14px; padding-right: 14px;
+}
+/* Rullet: overskrift og sortering forsvinder, og filtrene krymper til én
+ * rullelinje - ellers ville bjaelken aede en tredjedel af en telefonskaerm. */
+body.rullet .sortrow { display: none; }
+body.rullet .topbar { padding-bottom: 6px; box-shadow: 0 6px 16px -10px rgba(0,0,0,0.55); }
+body.rullet .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
+body.rullet .chips::-webkit-scrollbar { display: none; }
+body.rullet .chips .chip { flex: none; }
+
 /* Tilbage til toppen - dukker op, naar man er rullet et stykke ned i en lang liste. */
 #toTop {
   position: fixed; right: 14px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 35;
@@ -303,6 +325,17 @@ body.navfold.navopen .backdrop { display: block; }
 #toTop.vis { opacity: 1; transform: none; }
 /* Paa desktop staar bogstavs-skinnen i hoejre kant - flyt knappen fri af den. */
 @media (min-width: 901px) { #toTop { right: 96px; } }
+/* Kompakt-knappen foelger med, naar sortrow er rullet vaek - samme stoerrelse,
+ * lige ved siden af (en knapbredde + luft). */
+#compactFloat {
+  position: fixed; right: 66px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 35;
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--card); color: var(--ink); font-size: 1.1rem; line-height: 1; box-shadow: var(--shadow);
+  opacity: 0; transform: translateY(8px); transition: opacity 0.15s, transform 0.15s;
+}
+#compactFloat.vis { opacity: 1; transform: none; }
+#compactFloat.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+@media (min-width: 901px) { #compactFloat { right: 148px; } }
 
 /* Ny version klar: en PWA paa hjemmeskaermen genindlaeses maaske ALDRIG - den
  * lukkes ikke, den skjules. Derfor spoerger appen serveren, hver gang den kommer
@@ -458,6 +491,8 @@ body.loggedout nav { display: none; }
     </div>
     <div class="sub" id="syncState"></div>
   </div>
+  <div class="rulvagt" id="rulVagt"></div>
+  <div class="topbar">
   <div class="searchrow">
     <span class="icon">🔎</span>
     <input type="search" id="q" placeholder="Søg titel, forfatter, serie eller ISBN…" autocomplete="off">
@@ -478,7 +513,8 @@ body.loggedout nav { display: none; }
       <option value="rating">Vurdering (høj–lav)</option>
       <option value="series">Serie</option>
     </select>
-    <button type="button" class="chip" id="compactBtn" title="Kompakt visning – titel og forfatter på én linje">☰ Kompakt</button>
+    <button type="button" class="chip" id="compactBtn" title="Kompakt visning – titel og forfatter på én linje">▤ Kompakt</button>
+  </div>
   </div>
   <div id="list"></div>
 </section>
@@ -792,6 +828,7 @@ body.loggedout nav { display: none; }
 <div class="backdrop" id="navBackdrop"></div>
 <button type="button" id="navUnfold" title="Vis menuen">☰</button>
 <div class="toc" id="tocRail" hidden></div>
+<button type="button" id="compactFloat" title="Skift mellem kompakt og fuld visning" hidden>☰</button>
 <button type="button" id="toTop" title="Tilbage til toppen" hidden>↑</button>
 <div id="updateBar" hidden>
   <span id="updateTxt">Ny version er klar</span>
@@ -803,7 +840,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 21;
+const APP_VERSION = 22;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1017,8 +1054,13 @@ function byggToc() {
     ? `<button type="button" class="toc-item" data-toc="${i}" title="Hop til ${esc(p.navn)}"><span class="toc-dash"></span><span class="toc-txt">${esc(p.navn)}</span></button>`
     : `<button type="button" class="toc-item" data-toc="${i}" title="${esc(p.navn)}"><span class="toc-dash"></span><span class="toc-tekst">${esc(p.navn)}</span></button>`).join('');
   rail.hidden = false;
-  rail.querySelectorAll('[data-toc]').forEach(el => el.addEventListener('click',
-    () => tocState.punkter[Number(el.dataset.toc)].el.scrollIntoView({ behavior: 'smooth', block: 'start' })));
+  rail.querySelectorAll('[data-toc]').forEach(el => el.addEventListener('click', () => {
+    // Den klaebende bjaelke ville ellers daekke det bogstav, man lige bad om.
+    const maal = tocState.punkter[Number(el.dataset.toc)].el;
+    const bjaelke = document.querySelector('.topbar');
+    const luft = (bjaelke ? bjaelke.getBoundingClientRect().height : 0) + 10;
+    window.scrollTo({ top: maal.getBoundingClientRect().top + window.scrollY - luft, behavior: 'smooth' });
+  }));
   tocState.aktiv = -1;
   markerToc();
 }
@@ -1034,11 +1076,25 @@ function markerToc() {
  * kan naa at koere; ellers springer knappen frem uden overgang. */
 function opdaterToTop() {
   const vis = scrollY > 600;
-  const el = $('toTop');
-  if (vis && el.hidden) { el.hidden = false; requestAnimationFrame(() => el.classList.add('vis')); }
-  else if (vis) el.classList.add('vis');
-  else { el.classList.remove('vis'); el.hidden = true; }
+  for (const id of ['toTop', 'compactFloat']) {
+    const el = $(id);
+    if (vis && el.hidden) { el.hidden = false; requestAnimationFrame(() => el.classList.add('vis')); }
+    else if (vis) el.classList.add('vis');
+    else { el.classList.remove('vis'); el.hidden = true; }
+  }
 }
+
+/* Vagtposten: 1 px, usynlig, lige OVER den klaebende bjaelke. Den er kun til for
+ * at kunne ses forsvinde. rootMargin giver hysterese, saa bjaelken ikke blafrer
+ * paa graensen (sammenfoldningen flytter jo selv indholdet). */
+function registrerRullevagt() {
+  const vagt = $('rulVagt');
+  if (!vagt || !('IntersectionObserver' in window)) return;   // uden observer: bjaelken klaeber blot uden at krympe
+  new IntersectionObserver(([post]) => {
+    document.body.classList.toggle('rullet', !post.isIntersecting);
+  }, { rootMargin: '-8px 0px 0px 0px', threshold: 0 }).observe(vagt);
+}
+registrerRullevagt();
 $('toTop').addEventListener('click', () => {
   // IKKE fokus i soegefeltet: paa en telefon ville tastaturet springe frem,
   // og det er ikke det, man beder om, naar man vil tilbage til toppen.
@@ -1096,14 +1152,19 @@ try { compact = localStorage.getItem('bogreol_compact') === '1'; } catch (e) {}
 function applyCompact() {
   $('list').classList.toggle('compact', compact);
   $('compactBtn').classList.toggle('on', compact);
-  $('compactBtn').textContent = compact ? '▤ Fold ud' : '☰ Kompakt';
+  $('compactFloat').classList.toggle('on', compact);
+  $('compactFloat').textContent = compact ? '▦' : '▤';
+  $('compactFloat').title = compact ? 'Fold ud – vis covers og mærkater' : 'Fold ind – kompakt liste';
+  $('compactBtn').textContent = compact ? '▦ Fold ud' : '▤ Kompakt';
   $('compactBtn').title = compact ? 'Vis covers, serier og mærkater igen' : 'Kompakt visning – titel og forfatter på én linje';
 }
-$('compactBtn').addEventListener('click', () => {
+function skiftKompakt() {
   compact = !compact;
   try { localStorage.setItem('bogreol_compact', compact ? '1' : '0'); } catch (e) {}
   applyCompact();
-});
+}
+$('compactBtn').addEventListener('click', skiftKompakt);
+$('compactFloat').addEventListener('click', skiftKompakt);
 applyCompact();
 
 /* tema-valg (ren UI-praeference, gemmes i localStorage; head-scriptet anvender den foer foerste paint) */
