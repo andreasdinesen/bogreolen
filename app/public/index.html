@@ -409,7 +409,26 @@ body.navopen #navUnfold { display: none !important; }   /* menuen er aaben - kna
 .toc-tekst { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; transition: max-width 0.18s, opacity 0.14s; }
 .toc:hover .toc-tekst { max-width: 190px; opacity: 1; }
 .letterhead, .view h2 { scroll-margin-top: 16px; }
-@media (max-width: 900px) { .toc { display: none; } }
+/* Paa mobil er skinnen med - den er mest vaerd netop dér, hvor listen er lang og
+ * skaermen kort. Til gengaeld skal den vaere smal, altid laesbar (der findes ingen
+ * hover paa en telefon), og listen skal have plads til den, saa den ikke ligger
+ * oven paa bogkortene (§9b: aldrig en gennemsigtig stribe hen over indhold). */
+@media (max-width: 900px) {
+  /* Kun bogstaverne - en h2-oversigt med lange navne hoerer ikke til her. */
+  .toc:not(.letters) { display: none; }
+  .toc {
+    right: 2px; padding: 8px 3px 8px 10px; gap: 0;
+    max-height: 58vh;               /* slutter over de flydende knapper */
+    background: var(--card); border-color: var(--line); box-shadow: var(--shadow);
+  }
+  .toc-item { padding: 2px 2px; gap: 5px; font-size: 0.68rem; }
+  .toc-dash { width: 7px; }
+  .toc-item.on .toc-dash { width: 12px; }
+  .toc-txt { opacity: 0.75; }       /* ingen hover paa touch - de skal kunne laeses */
+  /* Plads til skinnen, saa den aldrig daekker en titel. */
+  body.tocvis #list { padding-right: 30px; }
+}
+@media (hover: none) { .toc-txt { opacity: 0.8; } }
 
 /* Toast */
 #toast {
@@ -840,7 +859,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 22;
+const APP_VERSION = 23;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1047,13 +1066,19 @@ function byggToc() {
       return { el, navn: stripEmoji(el.textContent).trim() || ('Afsnit ' + (i + 1)) };
     });
   }
-  if (fundne.length < 2 || smalSkaerm()) { rail.hidden = true; rail.innerHTML = ''; tocState.punkter = []; return; }
+  // Bogstaver vises ogsaa paa mobil; h2-oversigten er forbeholdt brede skaerme.
+  if (fundne.length < 2 || (smalSkaerm() && !bogstaver)) {
+    rail.hidden = true; rail.innerHTML = ''; tocState.punkter = [];
+    document.body.classList.remove('tocvis');
+    return;
+  }
   tocState.punkter = fundne;
   rail.classList.toggle('letters', bogstaver);
   rail.innerHTML = tocState.punkter.map((p, i) => bogstaver
     ? `<button type="button" class="toc-item" data-toc="${i}" title="Hop til ${esc(p.navn)}"><span class="toc-dash"></span><span class="toc-txt">${esc(p.navn)}</span></button>`
     : `<button type="button" class="toc-item" data-toc="${i}" title="${esc(p.navn)}"><span class="toc-dash"></span><span class="toc-tekst">${esc(p.navn)}</span></button>`).join('');
   rail.hidden = false;
+  document.body.classList.toggle('tocvis', bogstaver);
   rail.querySelectorAll('[data-toc]').forEach(el => el.addEventListener('click', () => {
     // Den klaebende bjaelke ville ellers daekke det bogstav, man lige bad om.
     const maal = tocState.punkter[Number(el.dataset.toc)].el;
@@ -1066,8 +1091,12 @@ function byggToc() {
 }
 /* Bogstavet, der lige er rullet forbi toppen, er det man er i. */
 function markerToc() {
+  // Graensen skal foelge den klaebende bjaelke: med en fast vaerdi ville bogstavet,
+  // man lige klikkede paa, ligge UNDER graensen og det forrige blive markeret.
+  const bar = document.querySelector('.topbar');
+  const graense = (bar && bar.offsetParent ? bar.getBoundingClientRect().bottom : 0) + 24;
   let i = 0;
-  for (let n = 0; n < tocState.punkter.length; n++) if (tocState.punkter[n].el.getBoundingClientRect().top <= 140) i = n;
+  for (let n = 0; n < tocState.punkter.length; n++) if (tocState.punkter[n].el.getBoundingClientRect().top <= graense) i = n;
   if (i === tocState.aktiv) return;
   tocState.aktiv = i;
   document.querySelectorAll('[data-toc]').forEach(el => el.classList.toggle('on', Number(el.dataset.toc) === i));
