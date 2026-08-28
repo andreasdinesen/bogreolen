@@ -593,6 +593,7 @@ body.loggedout nav { display: none; }
       <input type="search" id="bookQuery" placeholder="Titel og/eller forfatter">
       <button class="btn small" id="bookQueryGo" style="margin:0">Søg</button>
     </div>
+    <div id="ocrHints" style="display:none"></div>
     <div id="searchResults" style="margin-top:12px"></div>
     <button class="btn sec" id="searchCancel">Tilbage</button>
   </div>
@@ -866,7 +867,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 25;
+const APP_VERSION = 26;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -1799,18 +1800,27 @@ function stopScan() {
 }
 
 /* ---------- text search (add) ---------- */
-$('btnSearch').addEventListener('click', () => { showAddSub('search'); $('searchResults').innerHTML = ''; $('bookQuery').value = ''; $('bookQuery').focus(); });
+$('btnSearch').addEventListener('click', () => { showAddSub('search'); visOcrForslag([]); $('searchResults').innerHTML = ''; $('bookQuery').value = ''; $('bookQuery').focus(); });
 $('searchCancel').addEventListener('click', () => { pendingPhotoCover = ''; showAddSub('menu'); });
 $('bookQueryGo').addEventListener('click', () => runBookSearch($('bookQuery').value));
 $('bookQuery').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runBookSearch($('bookQuery').value); } });
-async function runBookSearch(q) {
-  q = String(q || '').trim();
-  if (!q) return;
-  $('searchResults').innerHTML = '<div class="center" style="padding:16px"><span class="spin"></span></div>';
-  let items = [];
+
+/* Google Books kender knap nok danske boeger - en dansk titel giver nul hits, ogsaa
+ * naar den er stavet helt rigtigt. Derfor spoerges bibliotek.dk foerst (og den taaler
+ * en del stoej fra tekstgenkendelsen), og Google Books laegges bagefter som supplement. */
+async function soegBibliotek(q) {
+  try {
+    const d = await api('/api/lookup/search?q=' + encodeURIComponent(q) + '&limit=6');
+    return (d.results || []).map(x => ({
+      title: x.title || '', authors: x.authors || [], isbn: x.isbn || '', cover: x.cover || '',
+      series: x.series || '', seriesNo: x.seriesNo || '', year: '', kilde: 'bibliotek.dk'
+    }));
+  } catch (e) { return []; }
+}
+async function soegGoogle(q) {
   try {
     const g = await fetchJson('https://www.googleapis.com/books/v1/volumes?maxResults=8&q=' + encodeURIComponent(q));
-    items = (g.items || []).map(it => {
+    return (g.items || []).map(it => {
       const v = it.volumeInfo || {};
       const ids = v.industryIdentifiers || [];
       const i13 = ids.find(x => x.type === 'ISBN_13'), i10 = ids.find(x => x.type === 'ISBN_10');
@@ -1818,26 +1828,50 @@ async function runBookSearch(q) {
         title: v.title || '', authors: v.authors || [],
         isbn: (i13 && i13.identifier) || (i10 && i10.identifier) || '',
         cover: v.imageLinks ? (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail || '').replace(/^http:/, 'https:') : '',
-        year: (v.publishedDate || '').slice(0, 4)
+        series: '', seriesNo: '', year: (v.publishedDate || '').slice(0, 4), kilde: 'Google Books'
       };
     }).filter(x => x.title);
-  } catch (e) {}
+  } catch (e) { return []; }
+}
+async function runBookSearch(q) {
+  q = String(q || '').trim();
+  if (!q) return;
+  $('searchResults').innerHTML = '<div class="center" style="padding:16px"><span class="spin"></span></div>';
+  const [dk, gg] = await Promise.all([soegBibliotek(q), soegGoogle(q)]);
+  const items = [];
+  const set = new Set();
+  [...dk, ...gg].forEach(x => {
+    const key = x.isbn || (x.title + '|' + (x.authors[0] || '')).toLowerCase();
+    if (set.has(key)) return;
+    set.add(key); items.push(x);
+  });
+  /* Begge kilder er fritekst og svarer ALTID med noget - bibliotek.dk fandt fx
+   * atomfysik paa "Rust Atomics and Locks". Derfor sorteres efter, hvor mange af
+   * soegeordene der faktisk staar i titel/forfatter; ved lige mange bevarer sort()
+   * raekkefoelgen, saa bibliotek.dk (danske boeger) bliver liggende foerst. */
+  const ord = q.toLowerCase().split(/[^0-9a-zæøå]+/).filter(t => t.length >= 3);
+  const traef = x => {
+    const h = (x.title + ' ' + x.authors.join(' ')).toLowerCase();
+    return ord.filter(t => h.includes(t)).length;
+  };
+  items.sort((a, b) => traef(b) - traef(a));
   if (!items.length) {
     $('searchResults').innerHTML = '<div class="empty">Ingen resultater – prøv en anden søgning, eller <button class="btn small sec" id="srManual" style="border:1px solid var(--line); background:var(--card); color:var(--ink)">indtast manuelt</button></div>';
     const m = $('srManual'); if (m) m.addEventListener('click', () => openForm({ title: $('bookQuery').value, owned: true, cover: pendingPhotoCover }));
     return;
   }
-  $('searchResults').innerHTML = items.map((x, i) => `
+  $('searchResults').innerHTML = items.slice(0, 12).map((x, i) => `
     <div class="result" data-i="${i}">
       ${x.cover ? `<div class="cover"><img src="${esc(x.cover)}" alt="" onerror="this.parentNode.innerHTML='📕'"></div>` : '<div class="cover">📕</div>'}
-      <div><div class="rt">${esc(x.title)}</div><div class="ra">${esc(x.authors.join(', '))}${x.year ? ' · ' + esc(x.year) : ''}</div></div>
+      <div><div class="rt">${esc(x.title)}</div><div class="ra">${esc(x.authors.join(', '))}${x.year ? ' · ' + esc(x.year) : ''} · ${esc(x.kilde)}</div></div>
     </div>`).join('');
   $('searchResults').querySelectorAll('.result').forEach(el => el.addEventListener('click', () => {
     const x = items[+el.dataset.i];
     const ex = (x.isbn && findByIsbn(x.isbn)) || findByTitleAuthor(x.title, x.authors);
     if (ex) { showExists(ex); return; }
     openForm({
-      title: x.title, authors: x.authors, isbn: x.isbn, cover: x.cover || pendingPhotoCover, owned: true,
+      title: x.title, authors: x.authors, isbn: x.isbn, series: x.series, seriesNo: x.seriesNo,
+      cover: x.cover || pendingPhotoCover, owned: true,
       _note: '<div class="notice ok">✔ Tjek oplysningerne og gem.</div>'
     });
   }));
@@ -1846,6 +1880,41 @@ async function runBookSearch(q) {
 /* ---------- photo / OCR ---------- */
 $('btnPhoto').addEventListener('click', () => { showAddSub('photo'); $('photoInput').value = ''; $('photoInput').click(); });
 $('photoCancel').addEventListener('click', () => { pendingPhotoCover = ''; showAddSub('menu'); });
+
+/* Ord der staar paa naesten alle forsider og kun stoejer i en soegning. */
+const OCR_STOJ = /^(gyldendal|politikens|politiken|lindhardt|ringhof|rosinante|modtryk|cicero|carlsen|alinea|forlag|forlaget|bogklub|roman|krimi|thriller|novelle|noveller|bestseller|udgave|oplag)$/i;
+
+/* Tesseract giver hvert ord en sikkerhed og hver linje en hoejde. Titlen staar med
+ * de stoerste bogstaver, saa linjerne rangeres efter hoejde - ikke efter laengde,
+ * som foer, hvor den laengste linje typisk var stoej fra billedet ("x % Pa pa gw y"). */
+function ocrLinjer(data) {
+  const ud = [];
+  (data.blocks || []).forEach(b => (b.paragraphs || []).forEach(p => (p.lines || []).forEach(l => {
+    const ord = (l.words || [])
+      .map(w => String(w.text || '').replace(/^[^0-9A-Za-zÆØÅæøå]+|[^0-9A-Za-zÆØÅæøå]+$/g, '').trim())
+      .filter((t, i) => {
+        const c = (l.words[i] || {}).confidence || 0;
+        return t.length >= 3 && c >= 45 && /^[A-Za-zÆØÅæøå'-]+$/.test(t) && !OCR_STOJ.test(t);
+      });
+    const t = ord.join(' ');
+    if (t.length >= 4) ud.push({ t, h: l.bbox ? l.bbox.y1 - l.bbox.y0 : 0 });
+  })));
+  const set = new Set();
+  return ud.sort((a, b) => b.h - a.h).filter(x => { const k = x.t.toLowerCase(); if (set.has(k)) return false; set.add(k); return true; });
+}
+/* Linjerne vises som knapper under soegefeltet, saa en forkert gaetning kan rettes
+ * med et tryk i stedet for at skulle skrives forfra. */
+function visOcrForslag(linjer) {
+  const box = $('ocrHints');
+  if (!linjer.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.innerHTML = '<div class="muted" style="font-size:0.78rem; margin:8px 0 4px">Læst på forsiden – tryk for at søge på:</div>' +
+    linjer.map((t, i) => `<button type="button" class="chip" data-ocr="${i}">${esc(t)}</button>`).join(' ');
+  box.querySelectorAll('[data-ocr]').forEach(el => el.addEventListener('click', () => {
+    $('bookQuery').value = linjer[+el.dataset.ocr];
+    runBookSearch($('bookQuery').value);
+  }));
+}
 $('photoInput').addEventListener('change', async e => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
@@ -1859,24 +1928,31 @@ $('photoInput').addEventListener('change', async e => {
     await injectScript(LIB_TESS);
     $('photoStatusText').textContent = 'Læser teksten på forsiden…';
     const worker = await Tesseract.createWorker(['dan', 'eng']);
-    const res = await worker.recognize(big);
+    const res = await worker.recognize(big, {}, { blocks: true });
     await worker.terminate();
-    const text = (res && res.data && res.data.text) || '';
-    const lines = text.split('\n').map(s => s.replace(/[^0-9A-Za-zÆØÅæøå' \-:.]/g, ' ').replace(/\s+/g, ' ').trim())
-      .filter(s => s.length > 3);
-    lines.sort((a, b) => b.length - a.length);
-    const q = lines.slice(0, 2).join(' ').slice(0, 80);
+    let linjer = ocrLinjer((res && res.data) || {}).map(x => x.t);
+    if (!linjer.length) {
+      // faldgrube-plan hvis biblioteket en dag holder op med at give bokse med:
+      // gaa tilbage til raa tekst, laengste linjer foerst
+      linjer = String((res && res.data && res.data.text) || '').split('\n')
+        .map(t => t.replace(/[^0-9A-Za-zÆØÅæøå' \-:.]/g, ' ').replace(/\s+/g, ' ').trim())
+        .filter(t => t.length > 3).sort((a, b) => b.length - a.length);
+    }
+    const q = linjer.slice(0, 3).join(' ').slice(0, 80).trim();
     $('photoStatus').style.display = 'none';
     showAddSub('search');
     $('bookQuery').value = q;
-    if (q) { runBookSearch(q); toast('Vælg den rigtige bog på listen – eller ret søgningen'); }
+    visOcrForslag(linjer.slice(0, 6));
+    if (q) { runBookSearch(q); toast('Vælg den rigtige bog – eller tryk på en af linjerne fra forsiden'); }
     else { toast('Kunne ikke læse teksten – søg manuelt'); }
   } catch (err) {
     $('photoStatus').style.display = 'none';
     showAddSub('search');
+    visOcrForslag([]);
     toast('Billedgenkendelse fejlede – søg manuelt i stedet');
   }
 });
+
 function loadImageFile(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);

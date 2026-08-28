@@ -550,14 +550,15 @@ function meJson(u) {
 }
 
 /* ---------------- bibliotek.dk (fælles for REST-proxy og MCP) ---------------- */
-async function bibliotekDk(query, variables) {
+async function bibliotekDkWorks(query, variables) {
   const r = await fetch('https://bibliotek.dk/api/SimpleSearch/graphql', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(8000),
     body: JSON.stringify({ query, variables })
   });
   const j = await r.json();
-  return j && j.data && j.data.search && j.data.search.works && j.data.search.works[0];
+  return (j && j.data && j.data.search && j.data.search.works) || [];
 }
+async function bibliotekDk(query, variables) { return (await bibliotekDkWorks(query, variables))[0]; }
 const wSerie = w => { const s = (w.series && w.series[0]) || null; const n = s ? String(s.numberInSeries || '').match(/\d+/) : null; return { series: (s && s.title) || '', seriesNo: n ? n[0] : '' }; };
 const wIsbnOf = m => { const id = (m.identifiers || []).find(i => i.type === 'ISBN'); return id ? String(id.value).replace(/[^0-9Xx]/g, '') : ''; };
 async function lookupIsbnBibliotek(isbn) {
@@ -588,6 +589,29 @@ async function lookupSearchBibliotek(qtext) {
       isbn: best ? wIsbnOf(best) : '', cover: (withCover && withCover.cover.detail) || ''
     }, wSerie(w));
   } catch (e) { return { found: false }; }
+}
+
+/* Fritekst-soegning der giver en LISTE. Google Books har naesten ingen danske
+ * boeger (hverken "Suser min lind" eller andre danske titler giver hits), saa uden
+ * bibliotek.dk gav en korrekt laest bogforside stadig "Ingen resultater". */
+const BIB_LISTE_Q = w => `query($q: SearchQueryInput!){ search(q:$q){ works(offset:0, limit:${w}){ titles{ full } creators{ display } series{ title numberInSeries } manifestations{ mostRelevant{ identifiers{ type value } materialTypes{ materialTypeGeneral{ code } } cover{ detail } } } } } }`;
+function bibVaerkTilBog(w) {
+  const mans = (w.manifestations && w.manifestations.mostRelevant) || [];
+  const isBook = m => (m.materialTypes || []).some(t => t.materialTypeGeneral && t.materialTypeGeneral.code === 'BOOKS');
+  const best = mans.find(m => isBook(m) && wIsbnOf(m)) || mans.find(m => wIsbnOf(m)) || null;
+  const withCover = (best && best.cover && best.cover.detail) ? best : mans.find(m => m.cover && m.cover.detail);
+  return Object.assign({
+    title: (w.titles && w.titles.full && w.titles.full[0]) || '',
+    authors: (w.creators || []).map(c => c.display).filter(Boolean),
+    isbn: best ? wIsbnOf(best) : '', cover: (withCover && withCover.cover.detail) || ''
+  }, wSerie(w));
+}
+async function searchListBibliotek(qtext, limit) {
+  const n = Math.min(10, Math.max(1, parseInt(limit, 10) || 5));
+  try {
+    const works = await bibliotekDkWorks(BIB_LISTE_Q(n), { q: { all: qtext } });
+    return works.map(bibVaerkTilBog).filter(b => b.title);
+  } catch (e) { return []; }
 }
 
 /* ---------------- OAuth 2.1 + MCP ---------------- */
@@ -1129,6 +1153,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/lookup/search' && req.method === 'GET') {
       const qtext = String(u.searchParams.get('q') || '').trim().slice(0, 200);
       if (!qtext) return err(res, 400, 'Mangler soegetekst');
+      // ?limit=N giver en liste (soegesiden); uden limit det gamle enkeltsvar (berigelse, MCP)
+      const limit = parseInt(u.searchParams.get('limit') || '0', 10);
+      if (limit > 0) return send(res, 200, { results: await searchListBibliotek(qtext, limit) });
       return send(res, 200, await lookupSearchBibliotek(qtext));
     }
 
