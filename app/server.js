@@ -500,6 +500,10 @@ function sanitizeBook(b) {
     owned: !!b.owned,
     format: ['hardback', 'paperback'].includes(b.format) ? b.format : 'paperback',
     read: !!b.read,
+    // Tre laesetilstande: laest / i gang / ikke laest. `read` er stadig sandheden om
+    // "faerdig", saa alt eksisterende (filtre, statistik, Mofibo, CSV) virker uaendret;
+    // `reading` er kun meningsfuldt, naar bogen IKKE er laest.
+    reading: !b.read && !!b.reading,
     readYear: Number.isInteger(b.readYear) ? b.readYear : null,
     wishlist: !!b.wishlist,
     rating: Number.isInteger(b.rating) && b.rating >= 0 && b.rating <= 5 ? b.rating : 0,

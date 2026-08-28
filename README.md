@@ -32,8 +32,12 @@ runen; ingen eksterne databaser, ingen npm-pakker, ingen ekstra containere.
   ISBN, cover og serie udfyldt automatisk (fx efter import fra regneark).
 - 🔎 Hurtige filtre og sortering: forfatter, titel, serie, vurdering — ejet, læst,
   *læst men ikke købt*, ulæst, ønskeliste, hardback, paperback.
-- 📖 Pr. bog: købt/ej, format (hardback/paperback), udgave og oplag, læst (med
-  årstal), stjerner, noter.
+- 📖 Pr. bog: købt/ej, format (hardback/paperback — nye bøger står som hardback),
+  udgave og oplag, læsestatus (**ikke læst / i gang / læst** med årstal), stjerner,
+  noter. »I gang« har sit eget filter, så du hurtigt finder det, du er i gang med.
+  Årstallet for »læst« gætter appen aldrig på — du sætter det selv, og du kan lade
+  det stå tomt. Skriver du bare »1« i Udgave og »4« i Oplag, bliver det til
+  »1. udgave« og »4. oplag«.
 - 🤝 Hold styr på udlån: skriv hvem bogen er lånt ud til — dato gemmes, og bogen
   får et »Udlånt«-badge og eget filter.
 - 📚 **Serie-oversigt** — se hele serien, markér hvad du har, og få links til de

@@ -103,7 +103,9 @@ body {
   color: var(--ink);
   font-size: 16px;
   line-height: 1.45;
-  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  /* Plads til de flydende knapper og hamburgeren nederst - ellers kan de sidste
+   * boeger i en kort, filtreret liste ikke rulles fri af dem. */
+  padding-bottom: calc(88px + env(safe-area-inset-bottom));
   padding-left: 84px;
 }
 body.navfold, body.loggedout { padding-left: 0; }
@@ -177,6 +179,7 @@ label { display: block; font-size: 0.82rem; color: var(--ink2); margin: 12px 0 4
 .badge.wish { background: var(--wish-soft); color: var(--wish); }
 .badge.fmt { background: var(--bg); color: var(--ink2); border: 1px solid var(--line); }
 .badge.unread { background: var(--warn-soft); color: var(--warn-ink); }
+.badge.reading { background: var(--accent-soft); color: var(--accent); }
 .badge.loan { background: var(--warn-soft); color: var(--warn-ink); border: 1px dashed var(--warn-ink); }
 .bstars { color: #eda100; font-size: 0.8rem; margin-top: 3px; letter-spacing: 1px; }
 .empty { text-align: center; color: var(--muted); padding: 40px 20px; }
@@ -649,8 +652,12 @@ body.loggedout nav { display: none; }
         </select>
       </div>
       <div class="togglerow">
-        <div><div class="tl">Jeg har læst den</div></div>
-        <span class="switch"><input type="checkbox" id="fRead"><span class="track"></span></span>
+        <div class="tl">Læsestatus</div>
+        <select id="fStatus" style="width:auto">
+          <option value="unread">Ikke læst</option>
+          <option value="reading">📖 I gang</option>
+          <option value="read">✔ Læst</option>
+        </select>
       </div>
       <div class="togglerow" id="yearRow" style="display:none">
         <div class="tl">Læst i år</div>
@@ -859,7 +866,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 23;
+const APP_VERSION = 24;
 /* ================= Min Bogreol ================= */
 
 const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
@@ -968,7 +975,7 @@ function addBook(data) {
   const b = Object.assign({
     id: uuid(), isbn: '', title: '', authors: [], cover: '', coverVer: null, series: '', seriesNo: '',
     edition: '', printing: '', loaned: false, loanedTo: '', loanedAt: null,
-    owned: false, format: 'paperback', read: false, readYear: null, wishlist: false,
+    owned: false, format: 'hardback', read: false, reading: false, readYear: null, wishlist: false,
     rating: 0, notes: '', addedAt: nowIso(), updatedAt: nowIso(), deleted: false
   }, data);
   books.push(b);
@@ -1153,7 +1160,8 @@ const CHIPS = [
   { id: 'all', label: 'Alle', f: b => true },
   { id: 'owned', label: 'Ejet', f: b => b.owned },
   { id: 'read', label: 'Læst', f: b => b.read },
-  { id: 'unread', label: 'Ulæst (ejet)', f: b => b.owned && !b.read },
+  { id: 'reading', label: '📖 I gang', f: b => b.reading && !b.read },
+  { id: 'unread', label: 'Ulæst (ejet)', f: b => b.owned && !b.read && !b.reading },
   { id: 'readnotowned', label: 'Læst · ikke købt', f: b => b.read && !b.owned },
   { id: 'wish', label: 'Ønskeliste', f: b => b.wishlist },
   { id: 'hardback', label: '📕 Hardback', f: b => b.owned && b.format === 'hardback' },
@@ -1285,7 +1293,8 @@ function badgesHtml(b) {
   if (b.owned && b.format) h += `<span class="badge fmt">${fmtIcon[b.format] || esc(b.format)}</span>`;
   if (b.loaned) h += `<span class="badge loan">🤝 Udlånt${b.loanedTo ? ' til ' + esc(b.loanedTo) : ''}</span>`;
   if (b.read) h += `<span class="badge read">Læst${b.readYear ? ' ' + b.readYear : ''}</span>`;
-  if (b.owned && !b.read) h += `<span class="badge unread">Ulæst</span>`;
+  if (b.reading && !b.read) h += `<span class="badge reading">📖 I gang</span>`;
+  if (b.owned && !b.read && !b.reading) h += `<span class="badge unread">Ulæst</span>`;
   if (b.read && !b.owned) h += `<span class="badge fmt">Ikke købt</span>`;
   if (b.wishlist) h += `<span class="badge wish">♡ Ønske</span>`;
   return h;
@@ -1400,8 +1409,9 @@ function openForm(prefill, editId) {
   $('fEdition').value = p.edition || '';
   $('fPrinting').value = p.printing || '';
   $('fOwned').checked = !!p.owned;
-  $('fFormat').value = p.format === 'hardback' ? 'hardback' : 'paperback';
-  $('fRead').checked = !!p.read;
+  // Nye boeger er hardback som standard; en eksisterende bogs eget valg vinder.
+  $('fFormat').value = p.format === 'paperback' ? 'paperback' : 'hardback';
+  $('fStatus').value = p.read ? 'read' : (p.reading ? 'reading' : 'unread');
   $('fReadYear').value = p.readYear || '';
   $('fWish').checked = !!p.wishlist;
   $('fNotes').value = p.notes || '';
@@ -1419,7 +1429,7 @@ function openForm(prefill, editId) {
 }
 function syncFormRows() {
   $('fmtRow').style.display = $('fOwned').checked ? 'flex' : 'none';
-  $('yearRow').style.display = $('fRead').checked ? 'flex' : 'none';
+  $('yearRow').style.display = $('fStatus').value === 'read' ? 'flex' : 'none';
 }
 /* Findes bogen ikke i bogdatabaserne, kan brugeren soege videre i sin EGEN browser.
  * Saxo og William Dam ligger bag Cloudflares bot-udfordring og kan ikke hentes
@@ -1483,10 +1493,20 @@ $('fCoverFile').addEventListener('change', async e => {
 });
 
 $('fOwned').addEventListener('change', syncFormRows);
-$('fRead').addEventListener('change', () => {
-  if ($('fRead').checked && !$('fReadYear').value) $('fReadYear').value = new Date().getFullYear();
-  syncFormRows();
+
+/* Skriver man bare et tal i Udgave/Oplag, skrives ordet paa: 1 -> "1. udgave",
+ * 4 -> "4. oplag". Alt andet (fx "1. udgave, revideret") staar uroert. */
+function udvidNummer(v, ord) {
+  const t = (v || '').trim();
+  const m = t.match(/^(\d{1,3})\.?$/);
+  return m ? `${m[1]}. ${ord}` : t;
+}
+[['fEdition', 'udgave'], ['fPrinting', 'oplag']].forEach(([id, ord]) => {
+  $(id).addEventListener('blur', e => { e.target.value = udvidNummer(e.target.value, ord); });
 });
+// Aarstallet udfyldes ALDRIG automatisk - man saetter selv, hvornaar bogen blev
+// laest (en bog man tilfoejer i dag er sjaeldent laest i aar). Tomt aar er lovligt.
+$('fStatus').addEventListener('change', syncFormRows);
 /* Samler formularens felter. Personlige felter (ejet/laest/vurdering/noter/udlaan)
  * kommer altid herfra - de roeres aldrig af et ISBN-opslag. */
 function formData() {
@@ -1496,12 +1516,14 @@ function formData() {
     isbn: $('fIsbn').value.trim(),
     series: $('fSeries').value.trim(),
     seriesNo: $('fSeriesNo').value.trim(),
-    edition: $('fEdition').value.trim(),
-    printing: $('fPrinting').value.trim(),
+    // ogsaa her, hvis man trykker Gem uden at forlade feltet foerst
+    edition: udvidNummer($('fEdition').value, 'udgave'),
+    printing: udvidNummer($('fPrinting').value, 'oplag'),
     owned: $('fOwned').checked,
     format: $('fFormat').value,
-    read: $('fRead').checked,
-    readYear: $('fRead').checked ? (parseInt($('fReadYear').value, 10) || null) : null,
+    read: $('fStatus').value === 'read',
+    reading: $('fStatus').value === 'reading',
+    readYear: $('fStatus').value === 'read' ? (parseInt($('fReadYear').value, 10) || null) : null,
     wishlist: $('fWish').checked,
     rating: formRating,
     notes: $('fNotes').value.trim(),
@@ -1688,7 +1710,8 @@ function showExists(b) {
   showView('add'); showAddSub('exists');
   const status = [
     b.owned ? '✅ Du <b>ejer</b> den' + (b.format ? ' (' + ({hardback:'hardback',paperback:'paperback'}[b.format]||esc(b.format)) + ')' : '') : '❌ Du ejer den ikke',
-    b.read ? '✅ Du har <b>læst</b> den' + (b.readYear ? ' i ' + b.readYear : '') : '📖 Du har ikke læst den endnu',
+    b.read ? '✅ Du har <b>læst</b> den' + (b.readYear ? ' i ' + b.readYear : '')
+      : (b.reading ? '📖 Du er <b>i gang</b> med den' : '📖 Du har ikke læst den endnu'),
     b.wishlist ? '♡ Den står på din ønskeliste' : ''
   ].filter(Boolean).join('<br>');
   $('existsBox').innerHTML = `
@@ -1915,8 +1938,12 @@ function openDetail(id) {
         <input type="date" id="dLoanedAt" style="width:auto" value="${esc(String(b.loanedAt || '').slice(0, 10))}">
       </div>
       <div class="togglerow">
-        <div><div class="tl">Jeg har læst den</div></div>
-        <span class="switch"><input type="checkbox" id="dRead" ${b.read ? 'checked' : ''}><span class="track"></span></span>
+        <div class="tl">Læsestatus</div>
+        <select id="dStatus" style="width:auto">
+          <option value="unread" ${!b.read && !b.reading ? 'selected' : ''}>Ikke læst</option>
+          <option value="reading" ${!b.read && b.reading ? 'selected' : ''}>📖 I gang</option>
+          <option value="read" ${b.read ? 'selected' : ''}>✔ Læst</option>
+        </select>
       </div>
       <div class="togglerow" id="dYearRow" style="${b.read ? '' : 'display:none'}">
         <div class="tl">Læst i år</div>
@@ -1975,11 +2002,12 @@ function openDetail(id) {
     loanT = setTimeout(() => { updateBook(id, { loanedTo: e.target.value.trim() }); refresh(); }, 600);
   });
   $('dLoanedAt').addEventListener('change', e => updateBook(id, { loanedAt: e.target.value || null }));
-  $('dRead').addEventListener('change', e => {
-    const yr = e.target.checked ? (parseInt($('dReadYear').value, 10) || new Date().getFullYear()) : null;
-    $('dYearRow').style.display = e.target.checked ? 'flex' : 'none';
-    if (e.target.checked && !$('dReadYear').value) $('dReadYear').value = yr;
-    updateBook(id, { read: e.target.checked, readYear: yr }); refresh();
+  $('dStatus').addEventListener('change', e => {
+    const laest = e.target.value === 'read';
+    // Ingen automatisk aarstal - feltet staar tomt, til man selv udfylder det.
+    const yr = laest ? (parseInt($('dReadYear').value, 10) || null) : null;
+    $('dYearRow').style.display = laest ? 'flex' : 'none';
+    updateBook(id, { read: laest, reading: e.target.value === 'reading', readYear: yr }); refresh();
   });
   $('dReadYear').addEventListener('change', e => updateBook(id, { readYear: parseInt(e.target.value, 10) || null }));
   $('dWish').addEventListener('change', e => { updateBook(id, { wishlist: e.target.checked }); refresh(); });
@@ -2248,7 +2276,7 @@ $('btnExport').addEventListener('click', async () => {
 });
 
 /* CSV: semikolon-separeret med BOM (dansk Excel), ja/nej-boolske felter */
-const CSV_HEADERS = ['isbn', 'titel', 'forfattere', 'serie', 'nr_i_serien', 'udgave', 'oplag', 'ejet', 'format', 'laest', 'laest_aar', 'oenskeliste', 'udlaant', 'udlaant_til', 'udlaansdato', 'vurdering', 'noter'];
+const CSV_HEADERS = ['isbn', 'titel', 'forfattere', 'serie', 'nr_i_serien', 'udgave', 'oplag', 'ejet', 'format', 'laest', 'laeser', 'laest_aar', 'oenskeliste', 'udlaant', 'udlaant_til', 'udlaansdato', 'vurdering', 'noter'];
 const csvCell = v => {
   const s = String(v == null ? '' : v);
   return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -2256,7 +2284,7 @@ const csvCell = v => {
 $('btnExportCsv').addEventListener('click', () => {
   const rows = books.filter(b => !b.deleted).map(b => [
     b.isbn, b.title, (b.authors || []).join(', '), b.series, b.seriesNo, b.edition, b.printing,
-    b.owned ? 'ja' : 'nej', b.format, b.read ? 'ja' : 'nej', b.readYear || '', b.wishlist ? 'ja' : 'nej',
+    b.owned ? 'ja' : 'nej', b.format, b.read ? 'ja' : 'nej', b.reading && !b.read ? 'ja' : 'nej', b.readYear || '', b.wishlist ? 'ja' : 'nej',
     b.loaned ? 'ja' : 'nej', b.loanedTo, (b.loanedAt || '').slice(0, 10), b.rating || '', b.notes
   ].map(csvCell).join(';'));
   downloadFile('\uFEFF' + CSV_HEADERS.join(';') + '\r\n' + rows.join('\r\n'),
@@ -2303,7 +2331,8 @@ function csvToBooks(text) {
       isbn: g.isbn(r), title, authors, series: g.serie(r), seriesNo: g.nr_i_serien(r),
       edition: g.udgave(r), printing: g.oplag(r),
       owned: csvBool(g.ejet(r)), format: g.format(r) === 'hardback' ? 'hardback' : 'paperback',
-      read: csvBool(g.laest(r)), readYear: parseInt(g.laest_aar(r), 10) || null,
+      read: csvBool(g.laest(r)), reading: !csvBool(g.laest(r)) && csvBool(g.laeser(r)),
+      readYear: parseInt(g.laest_aar(r), 10) || null,
       wishlist: csvBool(g.oenskeliste(r)),
       loaned: csvBool(g.udlaant(r)), loanedTo: g.udlaant_til(r), loanedAt: g.udlaansdato(r) || null,
       rating: Math.min(5, Math.max(0, parseInt(g.vurdering(r), 10) || 0)), notes: g.noter(r)

@@ -29,7 +29,8 @@ function opret(srv) {
     const flag = [];
     if (b.owned) flag.push('owned ' + (b.format || 'paperback'));
     if (b.read) flag.push('read' + (b.readYear ? ' ' + b.readYear : ''));
-    if (b.owned && !b.read) flag.push('unread');
+    if (b.reading && !b.read) flag.push('reading now');
+    if (b.owned && !b.read && !b.reading) flag.push('unread');
     if (b.wishlist) flag.push('wishlist');
     if (b.loaned) flag.push('loaned' + (b.loanedTo ? ' to ' + b.loanedTo : '') + (b.loanedAt ? ' since ' + String(b.loanedAt).slice(0, 10) : ''));
     if (b.rating) flag.push(b.rating + '/5');
@@ -41,7 +42,7 @@ function opret(srv) {
     id: b.id, title: b.title, authors: b.authors || [], isbn: b.isbn || '', series: b.series || '', series_no: b.seriesNo || '',
     edition: b.edition || '', printing: b.printing || '',
     owned: !!b.owned, format: b.owned ? (b.format || 'paperback') : null, read: !!b.read, read_year: b.readYear || null,
-    wishlist: !!b.wishlist, loaned: !!b.loaned, loaned_to: b.loanedTo || '', loaned_at: b.loanedAt || null,
+    reading: !!b.reading && !b.read, wishlist: !!b.wishlist, loaned: !!b.loaned, loaned_to: b.loanedTo || '', loaned_at: b.loanedAt || null,
     rating: b.rating || 0, notes: b.notes || '', has_cover: !!(b.cover || b.coverVer), added_at: b.addedAt, updated_at: b.updatedAt
   });
 
@@ -63,7 +64,8 @@ function opret(srv) {
     owned: b => b.owned,
     not_owned: b => !b.owned,
     read: b => b.read,
-    unread: b => b.owned && !b.read,
+    reading: b => b.reading && !b.read,
+    unread: b => b.owned && !b.read && !b.reading,
     read_not_owned: b => b.read && !b.owned,
     wishlist: b => b.wishlist,
     loaned: b => b.loaned,
@@ -98,6 +100,7 @@ function opret(srv) {
     owned: { type: 'boolean', description: 'The user owns a copy.' },
     format: { type: 'string', enum: ['hardback', 'paperback'], description: 'Binding of the owned copy.' },
     read: { type: 'boolean' },
+    reading: { type: 'boolean', description: 'Currently reading it (only meaningful when read is false).' },
     read_year: { type: 'integer', description: 'Year the book was read.' },
     wishlist: { type: 'boolean' },
     loaned: { type: 'boolean', description: 'The copy is currently lent out.' },
@@ -113,7 +116,8 @@ function opret(srv) {
     const p = {};
     const map = { title: 'title', authors: 'authors', isbn: 'isbn', series: 'series', series_no: 'seriesNo', edition: 'edition',
       printing: 'printing', owned: 'owned', format: 'format', read: 'read', read_year: 'readYear', wishlist: 'wishlist',
-      loaned: 'loaned', loaned_to: 'loanedTo', loaned_at: 'loanedAt', rating: 'rating', notes: 'notes', cover_url: 'cover' };
+      loaned: 'loaned', loaned_to: 'loanedTo', loaned_at: 'loanedAt', rating: 'rating', notes: 'notes', cover_url: 'cover',
+      reading: 'reading' };
     for (const [k, f] of Object.entries(map)) if (a[k] !== undefined && a[k] !== null) p[f] = a[k];
     if (p.authors && !Array.isArray(p.authors)) p.authors = String(p.authors).split(',').map(s => s.trim()).filter(Boolean);
     if (p.readYear !== undefined) p.readYear = parseInt(p.readYear, 10) || null;
@@ -123,7 +127,7 @@ function opret(srv) {
     if (p.loanedAt !== undefined && p.loanedAt && !/^\d{4}-\d{2}-\d{2}/.test(String(p.loanedAt))) return { fejl: 'loaned_at must be YYYY-MM-DD.' };
     if (p.loaned === true && !p.loanedAt) p.loanedAt = new Date().toISOString().slice(0, 10);
     if (p.loaned === false) { p.loanedTo = ''; p.loanedAt = null; }
-    if (p.read === true && p.readYear === undefined) p.readYear = new Date().getFullYear();
+    if (p.read === true) { p.reading = false; if (p.readYear === undefined) p.readYear = new Date().getFullYear(); }
     if (p.read === false) p.readYear = null;
     return { p };
   }
