@@ -136,7 +136,25 @@ const MIGRATIONS = [
       value TEXT NOT NULL,
       PRIMARY KEY (user_id, key)
     );
-  `)
+  `),
+  /* Boeger tastet ind foer udgave/oplag skrev ordet paa selv: "1" -> "1. udgave",
+   * "4" -> "4. oplag". updated_at saettes frem, saa telefonen henter rettelsen ved
+   * naeste synk. Kun rene tal roeres - fritekst staar uroert. */
+  db => {
+    const upd = db.prepare('UPDATE books SET data = ?, updated_at = ? WHERE id = ?');
+    const nu = new Date().toISOString();
+    let n = 0;
+    for (const row of db.prepare('SELECT id, data FROM books').all()) {
+      let b;
+      try { b = JSON.parse(row.data); } catch (e) { continue; }
+      const ny = { edition: udvidNummer(b.edition, 'udgave'), printing: udvidNummer(b.printing, 'oplag') };
+      if (ny.edition === (b.edition || '') && ny.printing === (b.printing || '')) continue;
+      b.edition = ny.edition; b.printing = ny.printing; b.updatedAt = nu;
+      upd.run(JSON.stringify(b), nu, row.id);
+      n++;
+    }
+    if (n) console.log(`[db] skrev udgave/oplag helt ud paa ${n} boeger`);
+  }
 ];
 (function migrate() {
   const cur = db.prepare('PRAGMA user_version').get().user_version || 0;
@@ -479,6 +497,15 @@ function serveStatic(res, relPath) {
 /* ---------------- validation ---------------- */
 const USERNAME_RE = /^[a-zA-Z0-9._æøåÆØÅ-]{2,32}$/;
 function validPassword(p) { return typeof p === 'string' && p.length >= 8 && p.length <= 200; }
+/* "1" -> "1. udgave", "4" -> "4. oplag". Kun rene tal (evt. med punktum) roeres;
+ * alt andet staar som skrevet. Ligger baade her og i frontenden, saa CSV-import,
+ * MCP og gamle klienter faar samme skrivemaade som formularen. */
+function udvidNummer(v, ord) {
+  const t = String(v || '').trim();
+  const m = t.match(/^(\d{1,3})\.?$/);
+  return m ? `${m[1]}. ${ord}` : t;
+}
+
 function sanitizeBook(b) {
   if (!b || typeof b !== 'object' || typeof b.id !== 'string' || !/^[0-9a-f-]{8,64}$/i.test(b.id)) return null;
   const s = v => String(v == null ? '' : v).slice(0, 2000);
@@ -492,8 +519,8 @@ function sanitizeBook(b) {
     coverVer: Number.isFinite(Number(b.coverVer)) && Number(b.coverVer) > 0 ? Number(b.coverVer) : null,
     series: s(b.series).slice(0, 300),
     seriesNo: s(b.seriesNo).slice(0, 10),
-    edition: s(b.edition).slice(0, 100),
-    printing: s(b.printing).slice(0, 100),
+    edition: udvidNummer(s(b.edition), 'udgave').slice(0, 100),
+    printing: udvidNummer(s(b.printing), 'oplag').slice(0, 100),
     loaned: !!(b.loaned || b.loanedTo),
     loanedTo: s(b.loanedTo).slice(0, 200),
     loanedAt: s(b.loanedAt).slice(0, 40) || null,
