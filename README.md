@@ -130,6 +130,15 @@ Alternativt: hent `runes/bogreol.yaml` og upload den under **Runes → Carve a r
 1. **Runes → Browse GitHub → Reload** henter den nye rune-definition.
 2. På serveren: tryk **»Opdater Min Bogreol«** (runens egen knap) — den skifter
    app-filerne ud og lader databasen stå. (Update/Reinstall virker også.)
+3. **Tryk derefter »Genstart«.** Knappen skifter kun filerne ud; den kørende
+   proces bruger stadig den gamle kode, indtil serveren genstartes — og
+   databaseændringer i en ny version kører først ved opstart. Scriptet siger det
+   selv med store bogstaver til sidst.
+
+Opdateringen pakker de nye filer ud *ved siden af* den kørende app og bytter først
+om, når de er verificeret; bliver den afbrudt, ruller opstarten automatisk tilbage
+til den gamle udgave. Trykker du på knappen to gange, siger den anden kørsel fra i
+stedet for at rode i den førstes filer.
 
 Samme knap bruges, hvis du skifter `NODE_IMAGE` for at få en nyere Node-version.
 
@@ -156,7 +165,10 @@ pege på den port, yggdrasil har tildelt serveren.
 
 `runes/bogreol.yaml` er genereret af `build_rune.py`, som pakker `app/` (server,
 MCP- og OAuth-modul, frontend, ikoner) som brotli-komprimeret tar i runens install-
-og opdaterings-script og verificerer payloaden byte for byte:
+og opdaterings-script og verificerer payloaden byte for byte. Build'et håndhæver
+også opdateringens tre vagter — atomisk lås om hele scriptet, udpakning ved siden af
+den kørende app, og genstart-beskeden til sidst — og `tests/opdatering.test.mjs`
+kører panelets eget script fra den færdige YAML, inkl. to samtidige kørsler:
 
 ```sh
 python3 build_rune.py   # skriver runes/bogreol.yaml (kræver PyYAML og node)

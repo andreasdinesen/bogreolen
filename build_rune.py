@@ -117,25 +117,63 @@ echo "Node: $(node --version)"
 echo "Min Bogreol v{app_version} er installeret."
 """
 
-# Opdaterings-scriptet: samme payload, men app/ ryddes FOERST, saa filer fjernet i en ny
-# version ikke bliver liggende (tar overskriver, men sletter ikke). Datamappen roeres ikke.
-# libs/ ligger under app/ og hentes derfor igen.
+# Opdaterings-scriptet. Samme payload som install, men tre ting maa vaere paa plads,
+# fordi panelets "Opdater app" hverken er enerraadig eller genstarter serveren
+# (RUNE-ERFARINGER, Sagu v48): en atomisk laas om HELE scriptet, en udpakning ved siden
+# af den koerende app (app/ ryddes foerst, naar de nye filer er verificeret), og en
+# tydelig besked om, at der stadig skal genstartes. Datamappen roeres ikke.
 update_script = f"""set -eu
 echo "Opdaterer Min Bogreol til v{app_version} ..."
 echo "Node: $(node --version)"
 
-rm -rf app
+# Knappen kan trykkes to gange. `mkdir` er atomisk paa alle filsystemer, hvor
+# `[ -d ]` efterfulgt af `mkdir` har et hul imellem sig. Laasen ligger om HELE
+# scriptet, og `trap` frigiver den - ellers goer den foerste fejlede opdatering
+# knappen doed for altid. En strandet laas ryddes af `startup`.
+if ! mkdir .bogreol-laas 2>/dev/null; then
+  echo "[fejl] en anden opdatering er allerede i gang."
+  echo "Vent til den er faerdig, eller genstart Min Bogreol og proev igen."
+  exit 1
+fi
+trap 'rm -rf .bogreol-laas .bogreol-ny' EXIT INT TERM
 
-# Samme brotli+base85-payload som install - se build_rune.py
-node -e '{DEKODER}' <<'YGG_PAYLOAD_EOF' | tar x
+rm -rf .bogreol-ny .bogreol-gammel
+mkdir -p .bogreol-ny
+
+# Samme brotli+base85-payload som install - se build_rune.py. Dekodes til en fil
+# FOER udpakningen: i en pipe ville en fejlet dekodning kunne skjule sig bag tar's
+# exitkode (POSIX sh har ikke pipefail).
+node -e '{DEKODER}' > .bogreol-ny/app.tar <<'YGG_PAYLOAD_EOF'
 {wrap(payload)}
 YGG_PAYLOAD_EOF
+tar x -C .bogreol-ny -f .bogreol-ny/app.tar
+rm -f .bogreol-ny/app.tar
 
-mkdir -p app/public/libs
-wget -q -O app/public/libs/html5-qrcode.min.js https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js \\
+if [ ! -f .bogreol-ny/app/server.js ]; then
+  echo "[fejl] de udpakkede filer mangler app/server.js - opdateringen er afbrudt."
+  echo "Min Bogreol koerer videre paa den gamle udgave."
+  exit 1
+fi
+
+mkdir -p .bogreol-ny/app/public/libs
+wget -q -O .bogreol-ny/app/public/libs/html5-qrcode.min.js https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js \\
   || echo "advarsel: kunne ikke hente scanner-biblioteket nu - appen bruger CDN i stedet"
 
+# To rename i SAMME mappe (aldrig /tmp, som er et andet filsystem og dermed en kopi,
+# der kan afbrydes). Den gamle app flyttes vaek frem for at blive slettet, saa
+# `startup` kan rulle tilbage, hvis vi bliver draebt mellem de to linjer - og fordi
+# hele traeet byttes ud, forsvinder filer, der er FJERNET i en ny version.
+if [ -d app ]; then mv app .bogreol-gammel; fi
+mv .bogreol-ny/app app
+rm -rf .bogreol-ny .bogreol-gammel
+
 echo "Min Bogreol er opdateret til v{app_version}. Databasen er uroert."
+echo ""
+echo "============================================"
+echo "  GENSTART MIN BOGREOL NU."
+echo "  Filerne er skiftet ud, men serveren koerer"
+echo "  stadig den gamle kode, indtil den genstartes."
+echo "============================================"
 """
 
 # Panelet koerer scriptet som ETT sh -c-argument; Linux' MAX_ARG_STRLEN er 131072 b.
@@ -181,8 +219,9 @@ gameskill:
 {indent(install_script.rstrip(), 6)}
 
   # Egen "Opdater Min Bogreol"-knap paa serversiden i panelet: skriver app-filerne igen
-  # uden at roere datamappen. `rm -rf app` foerst, saa filer der er FJERNET i en ny
-  # version ogsaa forsvinder. Databasen (bogreol.db) ligger uden for app/.
+  # uden at roere datamappen. Hele app-traeet byttes ud (den gamle flyttes til
+  # .bogreol-gammel og slettes bagefter), saa filer der er FJERNET i en ny version
+  # ogsaa forsvinder. Databasen (bogreol.db) ligger uden for app/.
   update:
     image: "{{{{NODE_IMAGE}}}}"
     label: "Opdater Min Bogreol"
@@ -190,8 +229,15 @@ gameskill:
 {indent(update_script.rstrip(), 6)}
 
   startup:
-    # node:sqlite er stabilt i Node 24; fallback-flaget daekker aeldre images.
+    # De to foerste linjer rydder op efter en opdatering, der blev draebt undervejs:
+    # `trap` naar ikke at koere ved et haardt drab, saa en strandet laas ville ellers
+    # goere "Opdater"-knappen doed for altid, og en app draebt mellem de to mv'er ville
+    # efterlade serveren uden kode. node:sqlite er stabilt i Node 24; fallback-flaget
+    # daekker aeldre images.
     command: |
+      if [ -d .bogreol-laas ]; then rm -rf .bogreol-laas .bogreol-ny; echo "[kode] en strandet opdateringslaas er ryddet"; fi
+      if [ ! -f app/server.js ] && [ -f .bogreol-gammel/server.js ]; then rm -rf app; mv .bogreol-gammel app; echo "[kode] en afbrudt opdatering er rullet tilbage - den gamle udgave koerer igen"; fi
+      if [ -f app/server.js ] && [ -d .bogreol-gammel ]; then rm -rf .bogreol-gammel; fi
       if node -e "require('node:sqlite')" >/dev/null 2>&1; then exec node app/server.js; else exec node --experimental-sqlite app/server.js; fi
     done_regex: 'Bogreol lytter'
     stop_timeout: 30
@@ -235,7 +281,43 @@ assert g['ports'][0]['name'] == 'web' and g['ports'][0]['protocol'] == 'tcp'
 assert any(v['key'] == 'NODE_IMAGE' and v.get('pattern') for v in g['variables'])
 assert "require('node:sqlite')" in g['startup']['command']
 assert 'bogreol.db' not in g['update']['script'], 'opdateringen maa ALDRIG roere databasen'
-assert re.search(r'^\s*rm -rf app\s*$', g['update']['script'], re.M), 'opdateringen rydder ikke app/'
+
+# Payloaden er tilfaeldige base85-tegn og kan indeholde hvad som helst - se kun paa koden.
+def _uden_payload(t):
+    return re.sub(r"YGG_PAYLOAD_EOF'[^\n]*\n.*?\nYGG_PAYLOAD_EOF", 'YGG_PAYLOAD_EOF', t, flags=re.S)
+def _kun_kode(t):
+    # kommentarerne NAEVNER /tmp som det, vi ikke goer - vagten skal se paa koden
+    return '\n'.join(l for l in _uden_payload(t).split('\n') if not l.lstrip().startswith('#'))
+# --- opdaterings-scriptets tre vagter (RUNE-ERFARINGER, Sagu v48). Reglerne staar her,
+# fordi de er lette at tabe igen: knappen er hverken enerraadig eller genstartende.
+_up = _uden_payload(g['update']['script'])
+assert not re.search(r'^\s*rm -rf app\s*$', _up, re.M), \
+    'app/ maa ikke slettes foer de nye filer er pakket ud - flyt den til .bogreol-gammel'
+assert re.search(r'^\s*if \[ -d app \]; then mv app \.bogreol-gammel; fi\s*$', _up, re.M), \
+    'den gamle app skal FLYTTES vaek, saa startup kan rulle tilbage'
+for _navn in ('install', 'update', 'startup'):
+    _t = _kun_kode(g['startup']['command'] if _navn == 'startup' else g[_navn]['script'])
+    assert '/tmp' not in _t, f'{_navn}: /tmp er en fast sti paa et andet filsystem - brug arbejdsmappen'
+# Laasen: mkdir er atomisk; [ -d ] + mkdir har et hul imellem sig.
+assert 'if ! mkdir .bogreol-laas 2>/dev/null; then' in _up, 'opdateringen tager ingen laas'
+assert "trap 'rm -rf .bogreol-laas .bogreol-ny' EXIT INT TERM" in _up, 'laasen frigives ikke ved fejl'
+# Raekkefoelge-assertion: BEVIS foerst at begge led findes. `indexOf`/`find` giver -1,
+# og -1 er mindre end alt - ellers ville kontrollen bestaa netop den dag, laasen var vaek.
+_i_laas, _i_arbejde = _up.find('mkdir .bogreol-laas'), _up.find('YGG_PAYLOAD_EOF')
+assert _i_laas >= 0 and _i_arbejde >= 0, 'laas eller payload mangler i opdateringen'
+assert _i_laas < _i_arbejde, 'laasen skal tages FOER der roeres ved filerne'
+# Beskeden er den eneste vagt mod, at panelet ikke genstarter serveren - alt der
+# printes bagefter, drukner den.
+_linjer = [l for l in _up.rstrip().split('\n') if l.strip()]
+assert 'GENSTART MIN BOGREOL NU.' in '\n'.join(_linjer[-5:]), 'genstart-beskeden staar ikke til sidst'
+assert _linjer[-1].strip() == 'echo "============================================"', \
+    'genstart-beskedens ramme skal vaere det sidste, scriptet skriver'
+_st = g['startup']['command']
+assert 'if [ -d .bogreol-laas ]; then rm -rf .bogreol-laas' in _st, \
+    'startup rydder ikke en strandet laas - saa er "Opdater"-knappen doed efter et haardt drab'
+assert 'if [ ! -f app/server.js ] && [ -f .bogreol-gammel/server.js ]; then' in _st, \
+    'startup kan ikke rulle en afbrudt opdatering tilbage'
+assert 'mv .bogreol-gammel app' in _st, 'startups tilbagerulning flytter ikke den gamle app paa plads'
 assert re.match(r'^node:[0-9]', 'node:24-alpine')  # pattern-eksempel
 _re = re.compile(next(v['pattern'] for v in g['variables'] if v['key'] == 'NODE_IMAGE'))
 assert _re.match('node:24-alpine') and _re.match('node:24.9.0-alpine') and not _re.match('alpine:3')
@@ -244,7 +326,7 @@ assert _re.match('node:24-alpine') and _re.match('node:24.9.0-alpine') and not _
 for _navn in ('install', 'update'):
     _script = g[_navn]['script']
     assert _script.count('YGG_PAYLOAD_EOF') == 2
-    _m = re.search(r"\| tar x\n(.*?)\nYGG_PAYLOAD_EOF", _script, re.S)
+    _m = re.search(r"YGG_PAYLOAD_EOF'[^\n]*\n(.*?)\nYGG_PAYLOAD_EOF", _script, re.S)
     _tar = tarfile.open(fileobj=io.BytesIO(subprocess.run(
         ['node', '-e', DEKODER], input=_m.group(1).encode(), stdout=subprocess.PIPE, check=True).stdout))
     _navne = set(_tar.getnames())
