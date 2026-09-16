@@ -867,10 +867,14 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 /* ================= Min Bogreol ================= */
 
-const LIB_QR = ['libs/html5-qrcode.min.js', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
+/* Den lokale kopi serveres med `public, max-age=604800` og ligger paa en sti, der ALDRIG
+ * skifter - uden `?v=` ville en opgradering af biblioteket (install-scriptet henter en
+ * pinned version) blive skygget af browser- og Cloudflare-cachen i op til en uge.
+ * Nummeret skal foelge den version, build_rune.py henter. */
+const LIB_QR = ['libs/html5-qrcode.min.js?v=2.3.8', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
 const LIB_TESS = ['https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js'];
 
 let books = [];

@@ -127,20 +127,41 @@ Alternativt: hent `runes/bogreol.yaml` og upload den under **Runes → Carve a r
 
 ### Opdatering
 
-1. **Runes → Browse GitHub → Reload** henter den nye rune-definition.
-2. På serveren: tryk **»Opdater Min Bogreol«** (runens egen knap) — den skifter
-   app-filerne ud og lader databasen stå. (Update/Reinstall virker også.)
-3. **Tryk derefter »Genstart«.** Knappen skifter kun filerne ud; den kørende
-   proces bruger stadig den gamle kode, indtil serveren genstartes — og
-   databaseændringer i en ny version kører først ved opstart. Scriptet siger det
-   selv med store bogstaver til sidst.
+Fra v28 henter Min Bogreol **selv** sin kode fra GitHub. **En genstart er
+opdateringen:** ved hver opstart spørger serveren efter nyeste udgave og skifter den
+ind, før den starter. Kan GitHub ikke nås, starter den på den kode, der ligger.
 
-Opdateringen pakker de nye filer ud *ved siden af* den kørende app og bytter først
-om, når de er verificeret; bliver den afbrudt, ruller opstarten automatisk tilbage
-til den gamle udgave. Trykker du på knappen to gange, siger den anden kørsel fra i
-stedet for at rode i den førstes filer.
+| I panelet | Hvornår |
+|---|---|
+| **Genstart** | Ved hver ny udgave — det normale |
+| **Opdater Min Bogreol** | Henter filerne nu. **Genstart bagefter** — knappen skifter filer, den genstarter ikke serveren |
+| **Runes → Reload** | Kun når runens egen version er bumpet |
 
-Samme knap bruges, hvis du skifter `NODE_IMAGE` for at få en nyere Node-version.
+Udskiftningen pakker de nye filer ud *ved siden af* den kørende app og bytter først
+om, når de er verificeret; bliver den afbrudt, ruller opstarten automatisk tilbage.
+Trykker du på knappen to gange, siger den anden kørsel fra i stedet for at rode i den
+førstes filer. Databasen bliver aldrig rørt.
+
+Skifter du `NODE_IMAGE` for at få en nyere Node-version, er det også knappen
+**Opdater Min Bogreol** efterfulgt af en genstart.
+
+#### Opgradering fra v27 (én gang)
+
+v27 bar hele appen i selve runen og kan ikke hente noget selv. Derfor denne ene gang:
+
+1. **Runes → Browse GitHub → Reload**, så panelet kender runens v28.
+2. Tryk **Opdater Min Bogreol**. Den henter v28 — inklusive `kilde.js`, der kan hente
+   resten selv. Scanner-biblioteket tages med fra den gamle udgave.
+3. **Genstart** serveren.
+
+Derefter er en genstart nok ved hver ny udgave.
+
+#### Hvis en udgave er dårlig
+
+Feltet **Lås app-versionen** (`KODE_VERSION`) er vejen tilbage: skriv fx `28`, og
+genstart — så hentes præcis den udgave, også selv om der findes en nyere. Tøm feltet
+igen for at følge med. Låser du til en udgave før v28, forsvinder `kilde.js`, og en
+genstart opdaterer ikke længere; så er vejen videre knappen **Opdater Min Bogreol**.
 
 ## Variabler
 
@@ -148,6 +169,7 @@ Samme knap bruges, hvis du skifter `NODE_IMAGE` for at få en nyere Node-version
 |---|---|---|
 | `APP_NAME` | Appens navn i titel/login | `Min Bogreol` |
 | `NODE_IMAGE` | Docker-image (Node-version) appen kører på — skift fx til `node:24.9.0-alpine` ved en CVE og tryk »Opdater« | `node:24-alpine` |
+| `KODE_VERSION` | Lås app-versionen til et bestemt nummer. **Tom = nyeste.** Se *Hvis en udgave er dårlig* | *(tom)* |
 
 ## Data og backup
 
@@ -163,12 +185,17 @@ pege på den port, yggdrasil har tildelt serveren.
 
 ## Byg runen selv
 
-`runes/bogreol.yaml` er genereret af `build_rune.py`, som pakker `app/` (server,
-MCP- og OAuth-modul, frontend, ikoner) som brotli-komprimeret tar i runens install-
-og opdaterings-script og verificerer payloaden byte for byte. Build'et håndhæver
-også opdateringens tre vagter — atomisk lås om hele scriptet, udpakning ved siden af
-den kørende app, og genstart-beskeden til sidst — og `tests/opdatering.test.mjs`
-kører panelets eget script fra den færdige YAML, inkl. to samtidige kørsler:
+`runes/bogreol.yaml` er genereret af `build_rune.py`. Runen er en lille
+**startsnor** (11 KB): den henter app-koden fra taggen `v<RUNE_VERSION>` på GitHub,
+og `app/kilde.js` henter derefter selv nyeste udgave ved hver opstart. Build'et
+håndhæver opdateringens vagter — atomisk lås om hele scriptet, redning af en afbrudt
+udskiftning, udpakning ved siden af den kørende app, ingen `/tmp`, og genstart-beskeden
+til sidst. `tests/opdatering.test.mjs` kører panelets eget script fra den færdige YAML,
+inkl. to samtidige kørsler og opgraderingen fra v27.
+
+En udgivelse er tre trin: commit → `git tag v<N>` → `git push --tags`. Uden taggen
+finder en genstart ingen ny udgave. `RUNE_VERSION` i `build_rune.py` bumpes kun, når
+selve runen ændrer sig.
 
 ```sh
 python3 build_rune.py   # skriver runes/bogreol.yaml (kræver PyYAML og node)
