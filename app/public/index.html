@@ -16,6 +16,21 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232a78d6'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle'%3E%F0%9F%93%9A%3C/text%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="icon-192.png">
 <style>
+/* ---- z-index-lagene (RUNE-ERFARINGER §4, regel 16) - samlet ét sted ----
+ * Flyt aldrig ét lag uden at se paa resten. Lavest oeverst:
+ *     2  .switch input          - lokalt: den usynlige afkrydsning over sporet
+ *    30  .toc                   - bogstavs-oversigten i hoejre kant
+ *    35  #toTop, #compactFloat  - de flydende knapper nederst til hoejre
+ *    38  .topbar                - klaebende soege-/filterbjaelke
+ *    40  nav                    - sidemenuen (fast i venstre side)
+ *    41  #navUnfold             - hamburgeren, naar menuen er foldet vaek
+ *    45  .backdrop              - skygge bag den udfoldede menu
+ *    50  nav (foldet/smal skaerm), .overlay - menuen som overlay; detalje-/formular-modaler
+ *    60  #searchScanOverlay     - scanneren i soegefeltet (over modalerne)
+ *    60  .usermenu              - lokalt i nav's stakkontekst, ikke sidens
+ *    70  #updateBar             - »ny version«-bjaelken, over alt interaktivt
+ *   100  #toast                 - beskeder, altid oeverst
+ */
 :root {
   color-scheme: light;
   --bg: #f9f9f7;
@@ -471,6 +486,12 @@ body.loggedout nav { display: none; }
 .iconbtn.acc { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .pkitem { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 0.88rem; }
 .pkitem:last-child { border-bottom: none; }
+/* Totrinsbekraeftelse: QR'en staar altid sort paa hvidt (ogsaa i moerkt tema) -
+ * en scanner leder efter moerke moduler paa lys bund. */
+.qrboks { display: inline-block; background: #fff; padding: 8px; border-radius: 10px; margin: 10px 0 4px; line-height: 0; }
+.qrboks svg { width: 220px; height: 220px; max-width: 100%; }
+.noegletekst { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; user-select: all; }
+.kodeliste { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; margin: 8px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95rem; user-select: all; }
 </style>
 </head>
 <body class="loggedout">
@@ -485,6 +506,11 @@ body.loggedout nav { display: none; }
     <input type="text" id="lUser" autocomplete="username" autocapitalize="none" required>
     <label>Kodeord</label>
     <input type="password" id="lPass" autocomplete="current-password" required>
+    <div id="lCodeWrap" hidden>
+      <label for="lCode">Engangskode fra din authenticator-app</label>
+      <input type="text" id="lCode" inputmode="numeric" autocomplete="one-time-code" autocapitalize="characters" maxlength="11" placeholder="123456">
+      <div class="muted" style="margin-top:4px">Mistet telefonen? Skriv en af dine genoprettelseskoder i stedet.</div>
+    </div>
     <div class="formerror" id="loginError"></div>
     <button type="submit" class="btn" id="loginBtn">Log ind</button>
   </form>
@@ -712,6 +738,11 @@ body.loggedout nav { display: none; }
     <div id="pkList"></div>
     <button class="btn small" id="pkAdd">＋ Tilføj passkey på denne enhed</button>
     <div class="formerror" id="pkError"></div>
+    <h2>🛡️ Totrinsbekræftelse</h2>
+    <div class="muted">Kræv en engangskode fra en authenticator-app (1Password, Google Authenticator, Aegis …), når du logger ind med kodeord. Virker også uden https. Passkeys springer koden over — de er selv et stærkere andet led.</div>
+    <div id="totpBox"></div>
+    <div id="totpKoder"></div>
+    <div class="formerror" id="totpError"></div>
     <details class="help">
       <summary>Skift kodeord</summary>
       <div class="inner">
@@ -867,7 +898,7 @@ body.loggedout nav { display: none; }
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 28;
+const APP_VERSION = 29;
 /* ================= Min Bogreol ================= */
 
 /* Den lokale kopi serveres med `public, max-age=604800` og ligger paa en sti, der ALDRIG
@@ -953,7 +984,11 @@ async function api(path, body, method) {
     showLogin();
     throw new Error(data.error || 'Ikke logget ind');
   }
-  if (!r.ok) throw new Error(data.error || 'Serverfejl (' + r.status + ')');
+  if (!r.ok) {
+    const fejl = new Error(data.error || 'Serverfejl (' + r.status + ')');
+    fejl.data = data;          // fx needsCode ved en forkert engangskode
+    throw fejl;
+  }
   return data;
 }
 function pushBook(b) {
@@ -2419,11 +2454,40 @@ function csvToBooks(text) {
     });
   }).filter(Boolean);
 }
+/* Gendannelse i PORTIONER. Eksporten indlejrer covers som data-URL (op til ~190 KB
+ * pr. bog, egne billeder op til 400 KB raa), saa 400 boeger fylder 20-25 MB - og
+ * serveren tager hoejst 6 MB pr. kald. Én POST med hele arrayet blev afvist, og
+ * backuppen kunne ikke gendannes. Hver portion er hoejst IMPORT_PORTION boeger OG
+ * hoejst IMPORT_MAKS_TEGN tegn; en enkelt stor bog sendes alene.
+ * tests/backup.test.mjs traekker DENNE funktion ud af filen og kalder den. */
+const IMPORT_PORTION = 25;
+const IMPORT_MAKS_TEGN = 4000000;
+async function importerIPortioner(arr, fremdrift) {
+  let importeret = 0, sendt = 0, portion = [], tegn = 0;
+  const send = async () => {
+    if (!portion.length) return;
+    const resp = await api('/api/books/import', { books: portion });
+    importeret += Number(resp.imported) || 0;
+    sendt += portion.length;
+    portion = []; tegn = 0;
+    if (fremdrift) fremdrift(sendt, arr.length);
+  };
+  for (const b of arr) {
+    const n = JSON.stringify(b).length;
+    if (portion.length && (portion.length >= IMPORT_PORTION || tegn + n > IMPORT_MAKS_TEGN)) await send();
+    portion.push(b);
+    tegn += n;
+  }
+  await send();
+  return importeret;
+}
 $('btnImport').addEventListener('click', () => $('importFile').click());
 $('importFile').addEventListener('change', e => {
   const f = e.target.files && e.target.files[0];
   if (!f) return;
   const isCsv = /\.csv$/i.test(f.name);
+  const btn = $('btnImport');
+  const btnTekst = btn.textContent;
   const r = new FileReader();
   r.onload = async () => {
     try {
@@ -2435,11 +2499,21 @@ $('importFile').addEventListener('change', e => {
         arr = Array.isArray(data) ? data : data.books;
       }
       if (!Array.isArray(arr) || !arr.length) throw new Error('format');
-      const resp = await api('/api/books/import', { books: arr });
+      btn.disabled = true;
+      const importeret = await importerIPortioner(arr, (sendt, i_alt) => {
+        btn.textContent = `Importerer… (${sendt}/${i_alt})`;
+      });
       await loadBooks();
       renderAll();
-      toast(`Importeret: ${resp.imported} bøger`);
-    } catch (err) { toast('⚠️ Import fejlede: ' + err.message); }
+      toast(`Importeret: ${importeret} bøger`);
+    } catch (err) {
+      // Portionerne foer fejlen ER gemt - hent dem, saa listen passer med serveren.
+      try { await loadBooks(); renderAll(); } catch (e) {}
+      toast('⚠️ Import fejlede: ' + err.message, 6000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = btnTekst;
+    }
   };
   r.readAsText(f);
   e.target.value = '';
@@ -2448,6 +2522,8 @@ $('importFile').addEventListener('change', e => {
 /* ---------- login / konto ---------- */
 function showLogin() {
   me = null;
+  visKodefelt(false);
+  $('totpKoder').innerHTML = '';   // en anden bruger paa samme skaerm maa ikke se dem
   document.body.classList.add('loggedout');
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-login'));
 }
@@ -2470,13 +2546,35 @@ async function afterLogin(m) {
   renderAccount();
   showApp();
 }
+/* Andet trin: kodefeltet staar der i forvejen, bare skjult. Ved `needsCode` foldes det
+ * UD - login-formularen tegnes IKKE om, for saa ryddes brugernavn og kodeord (§9d).
+ * En forkert engangskode lader feltet staa; et forkert kodeord folder det vaek igen. */
+function visKodefelt(vis) {
+  $('lCodeWrap').hidden = !vis;
+  if (!vis) $('lCode').value = '';
+}
 $('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   $('loginError').textContent = '';
+  const krop = { username: $('lUser').value.trim(), password: $('lPass').value };
+  const kode = $('lCode').value.trim();
+  if (!$('lCodeWrap').hidden && kode) krop.code = kode;
   try {
-    const d = await api('/api/login', { username: $('lUser').value.trim(), password: $('lPass').value });
+    const d = await api('/api/login', krop);
+    if (d.needsCode) {
+      visKodefelt(true);
+      $('loginError').textContent = 'Skriv koden fra din authenticator-app.';
+      $('lCode').focus();
+      return;
+    }
+    visKodefelt(false);
     await afterLogin(d.me);
-  } catch (err) { $('loginError').textContent = err.message; }
+  } catch (err) {
+    const kodeFejl = !!(err.data && err.data.needsCode);
+    visKodefelt(kodeFejl);
+    $('loginError').textContent = err.message;
+    if (kodeFejl) { $('lCode').value = ''; $('lCode').focus(); }
+  }
 });
 $('showRegBtn').addEventListener('click', () => {
   const f = $('regForm');
@@ -2591,6 +2689,7 @@ function renderAccount() {
       me = d.me; renderAccount(); toast('Passkey fjernet');
     } catch (e) { toast('⚠️ ' + e.message); }
   }));
+  renderTotp();
   $('adminPanel').style.display = me.isAdmin ? 'block' : 'none';
   if (me.isAdmin) renderAdmin();
   renderKeys();
@@ -2653,6 +2752,96 @@ $('cpSave').addEventListener('click', async () => {
   } catch (e) { $('cpError').textContent = e.message; }
 });
 
+/* ---------- totrinsbekraeftelse ---------- */
+/* Tre tilstande: slaaet fra, midt i en opsaetning og slaaet til. Hemmeligheden er IKKE i
+ * brug, foer en kode har passet - lukker man fanen midtvejs, er intet laast.
+ * Genoprettelseskoderne tegnes i #totpKoder, som renderTotp() ikke roerer, saa en
+ * gentegning af kontoen ikke kan viske dem ud, foer de er skrevet ned. */
+async function renderTotp() {
+  const boks = $('totpBox');
+  let st;
+  try { st = await api('/api/totp'); } catch (e) { boks.innerHTML = `<div class="muted">${esc(e.message)}</div>`; return; }
+  $('totpError').textContent = '';
+  if (st.enabled) {
+    boks.innerHTML = `<div class="pkitem"><span>🛡️ Slået til <span class="muted">· ${st.recoveryLeft} genoprettelseskode${st.recoveryLeft === 1 ? '' : 'r'} tilbage</span></span></div>
+      ${st.recoveryLeft <= 2 ? `<div class="notice warn">Der er få genoprettelseskoder tilbage. Slå totrinsbekræftelse fra og til igen for at få ti nye — en mistet telefon uden koder låser dig ude.</div>` : ''}
+      <details class="help">
+        <summary>Slå totrinsbekræftelse fra</summary>
+        <div class="inner">
+          <label for="totpOffPass">Dit kodeord</label>
+          <input type="password" id="totpOffPass" autocomplete="current-password">
+          <button class="btn small danger" id="totpOff">Slå fra</button>
+        </div>
+      </details>`;
+    $('totpOff').addEventListener('click', async () => {
+      $('totpError').textContent = '';
+      try {
+        const d = await api('/api/totp/disable', { password: $('totpOffPass').value });
+        me = d.me;
+        $('totpKoder').innerHTML = '';
+        toast('Totrinsbekræftelse er slået fra');
+        renderTotp();
+      } catch (e) { $('totpError').textContent = e.message; }
+    });
+    return;
+  }
+  boks.innerHTML = `<details class="help">
+      <summary>Slå totrinsbekræftelse til</summary>
+      <div class="inner">
+        <label for="totpOnPass">Dit kodeord</label>
+        <input type="password" id="totpOnPass" autocomplete="current-password">
+        <button class="btn small" id="totpStart">Start opsætning</button>
+      </div>
+    </details>`;
+  $('totpStart').addEventListener('click', async () => {
+    $('totpError').textContent = '';
+    try { visTotpOpsaetning(await api('/api/totp/setup', { password: $('totpOnPass').value })); }
+    catch (e) { $('totpError').textContent = e.message; }
+  });
+}
+function visTotpOpsaetning(d) {
+  // Hemmeligheden vises kun her - én gang. Serveren udleverer den aldrig igen.
+  $('totpBox').innerHTML = `<div class="notice info">
+      <b>1.</b> Scan koden med din authenticator-app.
+      <div class="qrboks">${d.qr || ''}</div>
+      <details class="help" style="margin:4px 0">
+        <summary>Kan du ikke scanne? Skriv nøglen</summary>
+        <div class="inner noegletekst" id="totpSecret">${esc(d.secret)}</div>
+      </details>
+      <b>2.</b> Skriv de seks cifre, appen viser — så ved vi, at det virker, før det slås til.
+      <input type="text" id="totpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" style="margin-top:8px">
+      <button class="btn small" id="totpEnable">Slå til</button>
+      <button class="btn small sec" id="totpCancel">Annullér</button>
+    </div>`;
+  $('totpCode').focus();
+  $('totpEnable').addEventListener('click', async () => {
+    $('totpError').textContent = '';
+    try {
+      const r = await api('/api/totp/enable', { code: $('totpCode').value });
+      me = r.me;
+      visGenoprettelseskoder(r.recovery);
+      toast('🛡️ Totrinsbekræftelse er slået til');
+      renderTotp();
+    } catch (e) { $('totpError').textContent = e.message; }
+  });
+  $('totpCancel').addEventListener('click', () => {
+    // Den halve opsaetning er ikke i brug; den ryddes, naar du slaar til eller fra naeste gang.
+    renderTotp();
+  });
+}
+function visGenoprettelseskoder(koder) {
+  const tekst = koder.join('\n');
+  $('totpKoder').innerHTML = `<div class="notice ok">
+      <b>Gem dine genoprettelseskoder nu — de vises kun denne ene gang.</b>
+      <div style="margin-top:4px">Hver kode virker <b>én gang</b> i stedet for en kode fra appen. Mister du telefonen og koderne, kan kun en administrator lukke dig ind igen. Serveren gemmer kun et fingeraftryk af dem.</div>
+      <div class="kodeliste" id="totpKodeliste">${koder.map(k => `<span>${esc(k)}</span>`).join('')}</div>
+      <button class="btn small" id="totpKopier">📋 Kopiér koderne</button>
+      <button class="btn small sec" id="totpGemt">Jeg har gemt dem</button>
+    </div>`;
+  $('totpKopier').addEventListener('click', async () => toast((await copyText(tekst)) ? 'Koderne er kopieret' : 'Kunne ikke kopiere – markér teksten og kopiér selv'));
+  $('totpGemt').addEventListener('click', () => { $('totpKoder').innerHTML = ''; });
+}
+
 /* ---------- admin-panel ---------- */
 async function renderAdmin() {
   try {
@@ -2662,9 +2851,10 @@ async function renderAdmin() {
       <div class="userrow" data-uid="${u.id}">
         <div class="grow">
           <div class="un">${u.isAdmin ? '👑 ' : ''}${esc(u.username)}${me && u.id === me.id ? ' <span class="muted">(dig)</span>' : ''}</div>
-          <div class="um">${u.books} bøger · ${u.passkeys} passkeys · oprettet ${esc((u.created || '').slice(0, 10))}</div>
+          <div class="um">${u.books} bøger · ${u.passkeys} passkeys${u.totp ? ' · 🛡️ totrin' : ''} · oprettet ${esc((u.created || '').slice(0, 10))}</div>
         </div>
         <button class="iconbtn" data-act="pw">Nyt kodeord</button>
+        ${u.totp && !(me && u.id === me.id) ? '<button class="iconbtn warn" data-act="totp">Fjern totrin</button>' : ''}
         <button class="iconbtn" data-act="role">${u.isAdmin ? 'Fjern admin' : 'Gør til admin'}</button>
         ${me && u.id === me.id ? '' : '<button class="iconbtn warn" data-act="del">Slet</button>'}
       </div>`).join('');
@@ -2678,6 +2868,17 @@ async function renderAdmin() {
             if (np == null) return;
             await api(`/api/admin/users/${uid}/password`, { password: np });
             toast(`Kodeordet for ${usr.username} er skiftet`);
+          } else if (btn.dataset.act === 'totp') {
+            // Noedudgang for en bruger, der har mistet baade telefon og koder. Ikke for
+            // dig selv - det kraever dit kodeord under Min konto (serveren spaerrer det ogsaa).
+            if (!btn.dataset.armed) {
+              btn.dataset.armed = '1';
+              btn.textContent = 'Sikker? Tryk igen';
+              setTimeout(() => { btn.dataset.armed = ''; btn.textContent = 'Fjern totrin'; }, 4000);
+              return;
+            }
+            await api(`/api/admin/users/${uid}/totp`, undefined, 'DELETE');
+            toast(`Totrinsbekræftelse er fjernet for ${usr.username}`);
           } else if (btn.dataset.act === 'role') {
             await api(`/api/admin/users/${uid}/role`, { isAdmin: !usr.isAdmin });
             toast(usr.isAdmin ? `${usr.username} er ikke længere admin` : `${usr.username} er nu administrator 👑`);

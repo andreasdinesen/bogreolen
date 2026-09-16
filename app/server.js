@@ -9,6 +9,8 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
+const totp = require('./totp.js');
+const qr = require('./qr.js');
 
 const BIND_PORT = parseInt(process.env.BIND_PORT || '3000', 10);
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
@@ -154,7 +156,28 @@ const MIGRATIONS = [
       n++;
     }
     if (n) console.log(`[db] skrev udgave/oplag helt ud paa ${n} boeger`);
-  }
+  },
+  /* Totrinsbekraeftelse (RUNE-ERFARINGER §9d). Hemmeligheden ligger i sin EGEN tabel
+   * pr. bruger - ikke i den globale settings-tabel - saa ingen laese-vej til
+   * frontenden, eksporten eller MCP kan tage den med. `enabled` saettes foerst, naar
+   * en kode har passet; `last_step` er genbrugsspaerren (§9d's totp_last).
+   * Genoprettelseskoderne gemmes hashet og stemples brugt (`used_at`), ikke slettet. */
+  db => db.exec(`
+    CREATE TABLE IF NOT EXISTS totp (
+      user_id INTEGER PRIMARY KEY,
+      secret TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      last_step INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS recovery_codes (
+      user_id INTEGER NOT NULL,
+      hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      used_at TEXT,
+      PRIMARY KEY (user_id, hash)
+    );
+  `)
 ];
 (function migrate() {
   const cur = db.prepare('PRAGMA user_version').get().user_version || 0;
@@ -178,7 +201,8 @@ const q = {
   deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
   allUsers: db.prepare(`SELECT u.id, u.username, u.is_admin, u.created_at,
       (SELECT COUNT(*) FROM books b WHERE b.user_id = u.id AND b.deleted = 0) AS books,
-      (SELECT COUNT(*) FROM credentials c WHERE c.user_id = u.id) AS passkeys
+      (SELECT COUNT(*) FROM credentials c WHERE c.user_id = u.id) AS passkeys,
+      (SELECT COUNT(*) FROM totp t WHERE t.user_id = u.id AND t.enabled = 1) AS totp
     FROM users u ORDER BY u.id`),
   insertSession: db.prepare('INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?,?,?,?)'),
   sessionByToken: db.prepare('SELECT * FROM sessions WHERE token = ?'),
@@ -204,6 +228,18 @@ const q = {
   getCover: db.prepare('SELECT * FROM covers WHERE book_id = ? AND user_id = ?'),
   deleteCover: db.prepare('DELETE FROM covers WHERE book_id = ? AND user_id = ?'),
   deleteUserCovers: db.prepare('DELETE FROM covers WHERE user_id = ?'),
+  totpByUser: db.prepare('SELECT * FROM totp WHERE user_id = ?'),
+  totpStart: db.prepare(`INSERT INTO totp (user_id, secret, enabled, last_step, created_at) VALUES (?,?,0,0,?)
+    ON CONFLICT(user_id) DO UPDATE SET secret = excluded.secret, enabled = 0, last_step = 0, created_at = excluded.created_at`),
+  totpEnable: db.prepare('UPDATE totp SET enabled = 1, last_step = ? WHERE user_id = ?'),
+  totpStep: db.prepare('UPDATE totp SET last_step = ? WHERE user_id = ?'),
+  deleteUserTotp: db.prepare('DELETE FROM totp WHERE user_id = ?'),
+  insertRecovery: db.prepare('INSERT INTO recovery_codes (user_id, hash, created_at, used_at) VALUES (?,?,?,NULL)'),
+  recoveryByHash: db.prepare('SELECT * FROM recovery_codes WHERE user_id = ? AND hash = ? AND used_at IS NULL'),
+  useRecovery: db.prepare('UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND hash = ?'),
+  recoveryLeft: db.prepare('SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL'),
+  deleteUserRecovery: db.prepare('DELETE FROM recovery_codes WHERE user_id = ?'),
+  deleteOtherSessions: db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?'),
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
   setSetting: db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
 };
@@ -543,10 +579,41 @@ function sanitizeBook(b) {
 function meJson(u) {
   return {
     id: u.id, username: u.username, isAdmin: !!u.is_admin,
+    totp: totpTil(u.id),
     // Brugerens egne valg (ikke enhedens) - foelger med paa tvaers af computer og telefon.
     prefs: Object.fromEntries(q.prefsByUser.all(u.id).map(r => [r.key, r.value])),
     passkeys: q.credsByUser.all(u.id).map(c => ({ id: c.id, label: c.label || 'Passkey', created: c.created_at }))
   };
+}
+
+/* ---------------- totrinsbekraeftelse (RUNE-ERFARINGER §9d) ---------------- */
+const totpTil = userId => { const t = q.totpByUser.get(userId); return !!(t && t.enabled); };
+/* Andet trin: en engangskode ELLER en genoprettelseskode.
+ *  - Den samme engangskode maa ikke bruges to gange: det vindue, der passede, gemmes
+ *    (last_step), og alt til og med det afvises bagefter.
+ *  - En genoprettelseskode er ENGANGS: den stemples brugt, ikke slettet. */
+function tjekAndetTrin(userId, raa) {
+  const t = q.totpByUser.get(userId);
+  if (!t || !t.enabled) return { ok: false, fejl: 'Totrinsbekræftelse er ikke slået til' };
+  const vindue = totp.tjek(t.secret, raa);
+  if (vindue !== null) {
+    if (vindue <= t.last_step) return { ok: false, fejl: 'Den kode er allerede brugt – vent på den næste' };
+    q.totpStep.run(vindue, userId);
+    return { ok: true };
+  }
+  const h = totp.hashKode(raa);
+  if (!q.recoveryByHash.get(userId, h)) return { ok: false };
+  q.useRecovery.run(nowIso(), userId, h);
+  return { ok: true, recovery: true, tilbage: q.recoveryLeft.get(userId).n };
+}
+function totpStatus(userId) {
+  const t = q.totpByUser.get(userId);
+  // Aldrig hemmeligheden - kun OM den er der, og hvor mange noedudgange der er tilbage.
+  return { enabled: !!(t && t.enabled), pending: !!(t && !t.enabled), recoveryLeft: t && t.enabled ? q.recoveryLeft.get(userId).n : 0 };
+}
+function slaaTotpFra(userId) {
+  q.deleteUserTotp.run(userId);
+  q.deleteUserRecovery.run(userId);
 }
 
 /* ---------------- bibliotek.dk (fælles for REST-proxy og MCP) ---------------- */
@@ -679,6 +746,7 @@ const mcp = require('./mcp.js').opret({
 /* Mofibo/Storytel: henter faerdiglaeste boeger ind. Samme srv-injektion som mcp/oauth,
  * saa modulet hverken kender databasen eller http'en. */
 const bogide = require('./bogide.js');
+const coverproxy = require('./coverproxy.js');
 const mofibo = require('./mofibo.js').opret({
   serverSecret: () => SERVER_SECRET,
   setting: (k, d) => setting(k, d),
@@ -919,6 +987,29 @@ const server = http.createServer(async (req, res) => {
         logSecurity(`login-fejl ip=${ip} bruger=${String(body.username || '').slice(0, 40)}`);
         return err(res, 401, 'Forkert brugernavn eller kodeord');
       }
+      /* Kodeordet passede. Er totrinsbekraeftelse slaaet til, er vi kun HALVVEJS: der
+       * udstedes ingen session, foer andet trin er set. Forkerte koder taeller i SAMME
+       * spand som kodeordet (og i en spand pr. bruger, saa skiftende IP'er ikke giver
+       * flere forsoeg) - og spanden toemmes foerst efter et HELT login. Toemtes den ved
+       * `needsCode`, kunne man faa 15 nye kodeforsoeg ved at sende kodeordet alene. */
+      if (totpTil(usr.id)) {
+        const brugerKey = 'totp|' + usr.id;
+        if (rateCount(brugerKey) >= 15) {
+          logSecurity(`totp-spaerret ip=${ip} bruger=${usr.username}`);
+          return err(res, 429, 'For mange forsøg – prøv igen om et kvarter');
+        }
+        const kode = typeof body.code === 'string' ? body.code.trim() : '';
+        if (!kode) return send(res, 200, { needsCode: true });
+        const svar = tjekAndetTrin(usr.id, kode);
+        if (!svar.ok) {
+          rateNote(key, 15 * 60);
+          rateNote(brugerKey, 15 * 60);
+          logSecurity(`totp-fejl ip=${ip} bruger=${usr.username}`);
+          return send(res, 401, { error: svar.fejl || 'Forkert engangskode', needsCode: true });
+        }
+        if (svar.recovery) logSecurity(`genoprettelseskode brugt ip=${ip} bruger=${usr.username} - ${svar.tilbage} tilbage`);
+        rateClear(brugerKey);
+      }
       rateClear(key);
       createSession(res, usr.id, ctx.secure);
       return send(res, 200, { me: meJson(usr) });
@@ -1042,6 +1133,86 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    /* --- totrinsbekraeftelse --- */
+    /* Alt, der roerer kontoens sikkerhed, kraever en BROWSER-SESSION - aldrig en
+     * adgangsnoegle eller et OAuth-token (tovos fejl: en skrive-noegle kunne hente
+     * friske genoprettelseskoder). Noeglerne stoppes allerede af data-rute-vagten
+     * ovenfor; tjekket her goer ruterne sikre, ogsaa hvis den vagt en dag udvides. */
+    if (p === '/api/totp' || p.startsWith('/api/totp/')) {
+      if (viaToken) return err(res, 403, 'Totrinsbekræftelse kræver, at du er logget ind i appen');
+      const ip = clientIp(req);
+      const kodeordOk = () => {
+        const k = 'kodeord|' + user.id;
+        if (rateCount(k) >= 15) return 'spaerret';
+        if (verifyPassword(user, String(body.password || ''))) { rateClear(k); return 'ok'; }
+        rateNote(k, 15 * 60);
+        logSecurity(`totp-kodeord-fejl ip=${ip} bruger=${user.username}`);
+        return 'forkert';
+      };
+      const kodeordFejl = r => r === 'spaerret'
+        ? err(res, 429, 'For mange forsøg – prøv igen om et kvarter')
+        : err(res, 403, 'Kodeordet er forkert');
+
+      if (p === '/api/totp' && req.method === 'GET') return send(res, 200, totpStatus(user.id));
+
+      /* Start opsaetningen. Kodeordet kraeves: ellers kunne en, der gaar forbi en ulaast
+       * skaerm, slaa andet trin til med sin EGEN telefon og laase ejeren ude. Hemmeligheden
+       * vises her - én gang - og aldrig igen. */
+      if (p === '/api/totp/setup' && req.method === 'POST') {
+        if (totpTil(user.id)) return err(res, 400, 'Totrinsbekræftelse er allerede slået til');
+        const r = kodeordOk();
+        if (r !== 'ok') return kodeordFejl(r);
+        const hem = totp.nyHemmelighed();
+        q.totpStart.run(user.id, hem, nowIso());
+        q.deleteUserRecovery.run(user.id);
+        const uri = totp.otpauth(hem, user.username, APP_NAME);
+        // tilSvg faar TEKSTEN - den kalder selv lavQr (§9d: Sagus [object Object]).
+        let svg = '';
+        try { svg = qr.tilSvg(uri, { px: 220 }); } catch (e) { console.error('[fejl] qr: ' + e.message); }
+        console.log(`[bruger] ${user.username} startede opsaetning af totrinsbekraeftelse`);
+        return send(res, 200, { secret: hem, uri, qr: svg });
+      }
+
+      /* Slaa til - foerst naar en kode har passet. Genoprettelseskoderne laves her og
+       * vises ÉN gang. Alle brugerens ANDRE sessioner slaas ihjel: de blev udstedt paa
+       * kodeordet alene, og den, der evt. allerede havde det, skal ikke blive siddende. */
+      if (p === '/api/totp/enable' && req.method === 'POST') {
+        const t = q.totpByUser.get(user.id);
+        if (!t) return err(res, 400, 'Start opsætningen først');
+        if (t.enabled) return err(res, 400, 'Totrinsbekræftelse er allerede slået til');
+        const k = 'totpop|' + user.id;
+        if (rateCount(k) >= 15) return err(res, 429, 'For mange forsøg – prøv igen om et kvarter');
+        const vindue = totp.tjek(t.secret, typeof body.code === 'string' ? body.code : '');
+        if (vindue === null) {
+          rateNote(k, 15 * 60);
+          return err(res, 400, 'Koden passer ikke – tjek at telefonens ur går rigtigt');
+        }
+        rateClear(k);
+        const koder = totp.nyeKoder(10);
+        db.exec('BEGIN');
+        try {
+          q.totpEnable.run(vindue, user.id);
+          q.deleteUserRecovery.run(user.id);
+          for (const kode of koder) q.insertRecovery.run(user.id, totp.hashKode(kode), nowIso());
+          q.deleteOtherSessions.run(user.id, user._token);
+          db.exec('COMMIT');
+        } catch (e) { db.exec('ROLLBACK'); throw e; }
+        logSecurity(`totp-slaaet-til ip=${ip} bruger=${user.username}`);
+        return send(res, 200, { enabled: true, recovery: koder, me: meJson(q.userById.get(user.id)) });
+      }
+
+      /* Slaa fra (eller afbryd en halv opsaetning) - kun mod kodeordet. */
+      if (p === '/api/totp/disable' && req.method === 'POST') {
+        const r = kodeordOk();
+        if (r !== 'ok') return kodeordFejl(r);
+        const varTil = totpTil(user.id);
+        slaaTotpFra(user.id);
+        if (varTil) logSecurity(`totp-slaaet-fra ip=${ip} bruger=${user.username}`);
+        return send(res, 200, Object.assign(totpStatus(user.id), { me: meJson(q.userById.get(user.id)) }));
+      }
+      return err(res, 404, 'Ukendt endpoint');
+    }
+
     /* webauthn registrering */
     if (p === '/api/webauthn/register/options' && req.method === 'POST') {
       const challenge = b64u(crypto.randomBytes(32));
@@ -1159,24 +1330,13 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await lookupSearchBibliotek(qtext));
     }
 
-    /* cover-proxy til eksport med billeder: browseren kan ikke laese cross-origin billeddata (canvas-taint) */
+    /* cover-proxy til eksport med billeder: browseren kan ikke laese cross-origin billeddata (canvas-taint).
+     * Vaertslisten, omdirigeringerne og spaerringen af private adresser bor i app/coverproxy.js. */
     if (p === '/api/lookup/cover' && req.method === 'GET') {
-      const COVER_HOSTS = ['covers.openlibrary.org', 'books.google.com', 'fbiinfo-present.dbc.dk'];
-      let target;
-      try { target = new URL(String(u.searchParams.get('url') || '')); } catch (e) { return err(res, 400, 'Ugyldig URL'); }
-      if (target.protocol !== 'https:' && target.protocol !== 'http:') return err(res, 400, 'Ugyldig URL');
-      if (!COVER_HOSTS.includes(target.hostname)) return err(res, 403, 'Ukendt billed-kilde');
-      try {
-        const r = await fetch(target, { signal: AbortSignal.timeout(10000), redirect: 'follow' });
-        const ct = r.headers.get('content-type') || '';
-        if (!r.ok || !ct.startsWith('image/')) return err(res, 404, 'Intet billede');
-        const ab = await r.arrayBuffer();
-        if (ab.byteLength > 3000000) return err(res, 413, 'Billedet er for stort');
-        res.writeHead(200, { 'Content-Type': ct, 'Cache-Control': 'private, max-age=3600' });
-        return res.end(Buffer.from(ab));
-      } catch (e) {
-        return err(res, 502, 'Kunne ikke hente billedet');
-      }
+      const r = await coverproxy.hent(String(u.searchParams.get('url') || ''));
+      if (r.fejl) return err(res, r.kode, r.fejl);
+      res.writeHead(200, { 'Content-Type': r.type, 'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+      return res.end(r.data);
     }
 
     /* admin */
@@ -1187,7 +1347,7 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, {
           users: q.allUsers.all().map(x => ({
             id: x.id, username: x.username, isAdmin: !!x.is_admin,
-            created: x.created_at, books: x.books, passkeys: x.passkeys
+            created: x.created_at, books: x.books, passkeys: x.passkeys, totp: !!x.totp
           })),
           allowRegistration: setting('allow_registration', '1') === '1'
         });
@@ -1198,7 +1358,7 @@ const server = http.createServer(async (req, res) => {
         }
         return send(res, 200, { allowRegistration: setting('allow_registration', '1') === '1' });
       }
-      const m = p.match(/^\/api\/admin\/users\/(\d+)(?:\/(password|role))?$/);
+      const m = p.match(/^\/api\/admin\/users\/(\d+)(?:\/(password|role|totp))?$/);
       if (m) {
         const targetId = parseInt(m[1], 10);
         const target = q.userById.get(targetId);
@@ -1210,6 +1370,15 @@ const server = http.createServer(async (req, res) => {
           q.setPassword.run(salt, hashPassword(body.password, salt), targetId);
           q.deleteUserSessions.run(targetId);
           console.log(`[admin] ${user.username} satte nyt kodeord for ${target.username}`);
+          return send(res, 200, { ok: true });
+        }
+        /* Noedudgang: mistet telefon OG koder. Kun for ANDRE brugere - en administrator
+         * maa ikke kunne fjerne sit EGET andet led herfra uden kodeordet, som
+         * Min konto kraever (beanledgers hul). Spaerret i serveren, ikke kun i UI'et. */
+        if (m[2] === 'totp' && req.method === 'DELETE') {
+          if (targetId === user.id) return err(res, 403, 'Slå din egen totrinsbekræftelse fra under Min konto');
+          slaaTotpFra(targetId);
+          logSecurity(`totp-fjernet-af-admin admin=${user.username} bruger=${target.username}`);
           return send(res, 200, { ok: true });
         }
         if (m[2] === 'role' && req.method === 'POST') {
@@ -1229,6 +1398,7 @@ const server = http.createServer(async (req, res) => {
           q.deleteUserBooks.run(targetId);
           q.deleteUserCovers.run(targetId);
           q.deleteUserPrefs.run(targetId);
+          slaaTotpFra(targetId);
           q.deleteUser.run(targetId);
           console.log(`[admin] ${user.username} slettede brugeren ${target.username}`);
           return send(res, 200, { ok: true });
