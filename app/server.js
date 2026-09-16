@@ -11,6 +11,8 @@ const fs = require('node:fs');
 const { DatabaseSync } = require('node:sqlite');
 const totp = require('./totp.js');
 const qr = require('./qr.js');
+/* Sidernes adresser (RUNE-ERFARINGER §9g) - samme liste som browseren bruger. */
+const ruter = require('./shared/ruter.js');
 
 const BIND_PORT = parseInt(process.env.BIND_PORT || '3000', 10);
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
@@ -298,7 +300,10 @@ function reqContext(req) {
 
 /* Ruller op i panelets sikkerhedshistorik via runens events:-blok. */
 const logSecurity = msg => console.warn(`[sikkerhed] ${msg}`);
-const clientIp = req => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+/* Klientens adresse til rate-spande og [sikkerhed]-linjer. ALDRIG den foerste vaerdi i
+ * X-Forwarded-For - den vaelger klienten selv. Reglen bor i app/klientip.js (kopieret
+ * raat mellem runerne). */
+const { klientIp } = require('./klientip.js');
 
 /* Vedvarende rate-limit (tabel `rate`). rateCount = antal i vinduet; rateNote = taeller én op. */
 const rq = {
@@ -352,6 +357,30 @@ const tq = {
   sweepClients: db.prepare(`DELETE FROM oauth_clients WHERE created_at < ?
                             AND NOT EXISTS (SELECT 1 FROM tokens t WHERE t.client_id = oauth_clients.id)`)
 };
+/* Hvad kan stadig komme ind paa kontoen uden om kodeordet og andet trin? Vises, naar
+ * 2FA slaas til: den, der havde kodeordet, kan have lavet en noegle eller forbundet en
+ * app. Auto-tilbagekald ville bryde ejerens egne connectors, saa ejeren vaelger selv.
+ * En app taeller med, saa laenge den har ENTEN et access- ELLER et refresh-token -
+ * et udloebet access-token med et levende refresh-token er stadig en forbindelse. */
+const adgangQ = {
+  noegler: db.prepare(`SELECT COUNT(*) AS n FROM tokens WHERE user_id = ? AND client_id IS NULL AND revoked_at IS NULL`),
+  apps: db.prepare(`SELECT COUNT(*) AS n FROM (
+                      SELECT client_id FROM tokens WHERE user_id = ? AND client_id IS NOT NULL AND revoked_at IS NULL
+                      UNION
+                      SELECT client_id FROM oauth_refresh WHERE user_id = ? AND revoked_at IS NULL)`),
+  passkeys: db.prepare('SELECT COUNT(*) AS n FROM credentials WHERE user_id = ?'),
+  // Tilbagekald ALT: egne noegler og OAuth-access i tokens, og refresh-tokens ved siden
+  // af (§9a: ellers henter appen bare et nyt access-token et kvarter senere).
+  alleTokens: db.prepare('UPDATE tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL'),
+  alleRefresh: db.prepare('UPDATE oauth_refresh SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL')
+};
+function adgangsOversigt(userId) {
+  return {
+    noegler: adgangQ.noegler.get(userId).n,
+    apps: adgangQ.apps.get(userId, userId).n,
+    passkeys: adgangQ.passkeys.get(userId).n
+  };
+}
 function nyToken(userId, label, scope, clientId, levetidSek) {
   const raw = 'br_' + crypto.randomBytes(24).toString('base64url');
   const id = crypto.randomBytes(8).toString('hex');
@@ -527,6 +556,26 @@ function serveStatic(res, relPath) {
       'X-Content-Type-Options': 'nosniff'
     });
     res.end(data);
+  });
+}
+
+/* index.html med rute-listen sat ind. Frontenden er inline, saa app/shared/ruter.js
+ * indsaettes i siden i stedet for at blive en ekstra .js, der skulle cache-bustes.
+ * Begge filer laeses pr. kald (som serveStatic), saa de aldrig er fra to udgaver. */
+const RUTER_MAERKE = '<script data-ruter></script>';
+function serveIndex(res) {
+  fs.readFile(path.join(PUBLIC_DIR, 'index.html'), 'utf8', (e, html) => {
+    if (e) return err(res, 404, 'Ikke fundet');
+    fs.readFile(path.join(APP_DIR, 'shared', 'ruter.js'), 'utf8', (e2, js) => {
+      if (e2 || !html.includes(RUTER_MAERKE) || /<\/script/i.test(js)) {
+        console.error('[fejl] index.html kunne ikke faa rute-listen sat ind');
+        return err(res, 500, 'Serverfejl: siden mangler sine adresser');
+      }
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'
+      });
+      res.end(html.replace(RUTER_MAERKE, () => '<script data-ruter>' + js + '</script>'));
+    });
   });
 }
 
@@ -841,7 +890,7 @@ async function oauthRute(req, res, u, p) {
   if (p === '/oauth/register' && req.method === 'POST') {
     // Saet graensen HOEJT: rammes den, findes klienten aldrig, og brugeren faar "ukendt
     // klient" paa samtykkesiden - en fejl der peger et andet sted hen end aarsagen.
-    const key = 'oauthreg|' + clientIp(req);
+    const key = 'oauthreg|' + klientIp(req);
     if (rateCount(key) >= 60) return sendPublic(res, 429, { error: 'too_many_requests' });
     rateNote(key, 3600);
     const r = oauth.registrer(await readFormOrJson(req));
@@ -915,14 +964,23 @@ const server = http.createServer(async (req, res) => {
 
   try {
     /* --- static --- */
-    if (req.method === 'GET' && (p === '/' || p === '/index.html')) return serveStatic(res, 'index.html');
+    /* /statistik, /bog/<id> ... er ikke filer - de er sider INDE i appen. Browseren skal
+     * have index.html paa dem, ellers doer et genindlaes (eller et bogmaerke) i en 404.
+     * Kun de kendte stier (app/shared/ruter.js) - aldrig en catch-all. */
+    if (req.method === 'GET' && (p === '/' || ruter.sideForSti(p))) return serveIndex(res);
     if (req.method === 'GET' && p === '/manifest.webmanifest') {
-      res.writeHead(200, { 'Content-Type': 'application/manifest+json' });
+      /* ?start=/statistik: laegger man appen paa hjemmeskaermen fra en side, skal ikonet
+       * aabne DEN side - iOS laeser start_url fra manifestet, ikke adresselinjen. Stien
+       * slaas op i ruteren: et manifest maa ikke pege paa hvad som helst, nogen skriver. */
+      const oensket = String(u.searchParams.get('start') || '');
+      const side = oensket ? ruter.sideForSti(oensket) : null;
+      const start = side ? ruter.stiForSide(side, ruter.bogForSti(oensket)) || '/' : '/';
+      res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify({
-        name: APP_NAME, short_name: 'Bogreol', start_url: '.', display: 'standalone',
+        name: APP_NAME, short_name: 'Bogreol', start_url: start, scope: '/', display: 'standalone',
         background_color: '#f9f9f7', theme_color: '#2a78d6', lang: 'da',
-        icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
-                { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }]
+        icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+                { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }]
       }));
     }
     if (req.method === 'GET' && /^\/(libs\/[\w.\-]+|icon-\d+\.png|favicon\.ico)$/.test(p)) {
@@ -975,7 +1033,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { me: meJson(nu), firstUser: total === 0 });
     }
     if (p === '/api/login' && req.method === 'POST') {
-      const ip = clientIp(req);
+      const ip = klientIp(req);
       const key = 'login|' + ip + '|' + String(body.username || '').toLowerCase();
       if (rateCount(key) >= 15) {
         logSecurity(`login-spaerret ip=${ip}`);
@@ -1091,6 +1149,23 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    /* Tilbagekald ALLE adgangsnoegler og forbundne apps på én gang (tilbydes, naar 2FA
+     * slaas til). Kun browser-session: en noegle maa aldrig kunne slaa de andre ihjel -
+     * eller sig selv ud af en undersoegelse. `confirm` er UI'ets bekraeftelse. */
+    if (p === '/api/keys/revoke-all' && req.method === 'POST') {
+      if (viaToken) return err(res, 403, 'Kræver, at du er logget ind i appen');
+      if (body.confirm !== true) return err(res, 400, 'Bekræft tilbagekaldelsen');
+      const foer = adgangsOversigt(user.id);
+      db.exec('BEGIN');
+      try {
+        adgangQ.alleTokens.run(nowIso(), user.id);
+        adgangQ.alleRefresh.run(nowSec(), user.id);
+        db.exec('COMMIT');
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+      logSecurity(`alle-noegler-tilbagekaldt ip=${klientIp(req)} bruger=${user.username} noegler=${foer.noegler} apps=${foer.apps}`);
+      return send(res, 200, { ok: true, tilbagekaldt: { noegler: foer.noegler, apps: foer.apps }, adgang: adgangsOversigt(user.id) });
+    }
+
     /* Brugerens praeferencer (kun de kendte noegler - ikke et frit noegle/vaerdi-lager) */
     if (p === '/api/prefs' && req.method === 'POST') {
       const KENDTE = { listtop: ['title', 'author'] };
@@ -1140,7 +1215,7 @@ const server = http.createServer(async (req, res) => {
      * ovenfor; tjekket her goer ruterne sikre, ogsaa hvis den vagt en dag udvides. */
     if (p === '/api/totp' || p.startsWith('/api/totp/')) {
       if (viaToken) return err(res, 403, 'Totrinsbekræftelse kræver, at du er logget ind i appen');
-      const ip = clientIp(req);
+      const ip = klientIp(req);
       const kodeordOk = () => {
         const k = 'kodeord|' + user.id;
         if (rateCount(k) >= 15) return 'spaerret';
@@ -1198,7 +1273,7 @@ const server = http.createServer(async (req, res) => {
           db.exec('COMMIT');
         } catch (e) { db.exec('ROLLBACK'); throw e; }
         logSecurity(`totp-slaaet-til ip=${ip} bruger=${user.username}`);
-        return send(res, 200, { enabled: true, recovery: koder, me: meJson(q.userById.get(user.id)) });
+        return send(res, 200, { enabled: true, recovery: koder, adgang: adgangsOversigt(user.id), me: meJson(q.userById.get(user.id)) });
       }
 
       /* Slaa fra (eller afbryd en halv opsaetning) - kun mod kodeordet. */
@@ -1364,7 +1439,11 @@ const server = http.createServer(async (req, res) => {
         const target = q.userById.get(targetId);
         if (!target) return err(res, 404, 'Brugeren findes ikke');
 
+        /* Sit EGET kodeord skifter man under Min konto, hvor det gamle kraeves. Ellers kan
+         * den, der gaar forbi en ulaast admin-skaerm, tage kontoen uden at kende kodeordet
+         * (og slaa alle ejerens andre sessioner ihjel). Spaerret i serveren, ikke kun i UI'et. */
         if (m[2] === 'password' && req.method === 'POST') {
+          if (targetId === user.id) return err(res, 403, 'Skift dit eget kodeord under Min konto – dér kræves det nuværende');
           if (!validPassword(body.password)) return err(res, 400, 'Kodeordet skal være mindst 8 tegn');
           const salt = crypto.randomBytes(16).toString('hex');
           q.setPassword.run(salt, hashPassword(body.password, salt), targetId);

@@ -250,10 +250,43 @@ function tjekTrae(mappe, version) {
       throw new Error(`den hentede kode mangler ${kraevet}`);
     }
   }
+  tjekRequires(mappe);
   const v = stempel(fs.readFileSync(path.join(mappe, 'public', 'index.html'), 'utf8'));
   if (v === null) throw new Error('den hentede index.html har intet versionsstempel');
   if (v !== version) {
     throw new Error(`taggen v${version} indeholder kode stemplet v${v}`);
+  }
+}
+
+/**
+ * Alt, den hentede kode require'r relativt, skal FINDES i det hentede trae.
+ *
+ * Listen i tjekTrae() er haandskrevet, og en haandskrevet liste fanger
+ * tilfoejelser - aldrig udeladelser (Beanledger v30). Et nyt modul, der ikke
+ * kom paa listen, blev godkendt, og serveren doede med MODULE_NOT_FOUND ved
+ * hver genstart (fundet 2026-09-16, klientip.js). Derfor udledes kravet af
+ * KODEN. Kommentarlinjer springes over, saa en forklaring ikke kan blokere en
+ * opdatering.
+ */
+function tjekRequires(mappe) {
+  const rod = path.resolve(mappe);
+  for (const under of ['', 'shared']) {
+    const d = path.join(rod, under);
+    if (!fs.existsSync(d)) continue;
+    for (const navn of fs.readdirSync(d)) {
+      if (!navn.endsWith('.js')) continue;
+      const fil = path.join(d, navn);
+      const kode = fs.readFileSync(fil, 'utf8').split('\n')
+        .filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l)).join('\n');
+      for (const m of kode.matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
+        let maal = path.resolve(path.dirname(fil), m[1]);
+        if (!/\.(js|json)$/.test(maal)) maal += '.js';
+        if (!maal.startsWith(rod + path.sep)) continue;   // uden for app/ er ikke denne kontrols sag
+        if (!fs.existsSync(maal)) {
+          throw new Error(`den hentede kode mangler ${path.relative(rod, maal)} (kraevet af ${path.relative(rod, fil)})`);
+        }
+      }
+    }
   }
 }
 
@@ -341,6 +374,6 @@ async function main() {
   process.exit(0);
 }
 
-module.exports = { oensket, installeret, stempel, nyesteTag, tjekTrae, bevarLibs, opdater, MAERKE };
+module.exports = { oensket, installeret, stempel, nyesteTag, tjekTrae, tjekRequires, bevarLibs, opdater, MAERKE };
 
 if (require.main === module) main();

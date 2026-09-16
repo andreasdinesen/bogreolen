@@ -12,9 +12,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Bogreol">
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232a78d6'/%3E%3Ctext x='50' y='68' font-size='52' text-anchor='middle'%3E%F0%9F%93%9A%3C/text%3E%3C/svg%3E">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
 /* ---- z-index-lagene (RUNE-ERFARINGER §4, regel 16) - samlet ét sted ----
  * Flyt aldrig ét lag uden at se paa resten. Lavest oeverst:
@@ -562,6 +562,7 @@ body.loggedout nav { display: none; }
       <option value="series">Serie</option>
     </select>
     <button type="button" class="chip" id="compactBtn" title="Kompakt visning – titel og forfatter på én linje">▤ Kompakt</button>
+    <button type="button" class="chip" id="copyListBtn" title="Kopiér den viste liste – med formatering til Notes, Mail, Word og OneNote">📋 Kopiér listen</button>
   </div>
   </div>
   <div id="list"></div>
@@ -742,6 +743,7 @@ body.loggedout nav { display: none; }
     <div class="muted">Kræv en engangskode fra en authenticator-app (1Password, Google Authenticator, Aegis …), når du logger ind med kodeord. Virker også uden https. Passkeys springer koden over — de er selv et stærkere andet led.</div>
     <div id="totpBox"></div>
     <div id="totpKoder"></div>
+    <div id="totpAdgang"></div>
     <div class="formerror" id="totpError"></div>
     <details class="help">
       <summary>Skift kodeord</summary>
@@ -757,14 +759,10 @@ body.loggedout nav { display: none; }
     <button class="btn small sec iconbtn" id="btnLogout" style="margin-top:10px">Log ud</button>
   </div>
 
-  <div class="panel" id="adminPanel" style="display:none">
+  <div class="panel" id="adminLink" hidden>
     <h2 style="margin-top:0">👑 Administration</h2>
-    <div class="togglerow">
-      <div><div class="tl">Tillad nye registreringer</div><div class="td">Slå fra, når alle i husstanden har en bruger</div></div>
-      <span class="switch"><input type="checkbox" id="admAllowReg"><span class="track"></span></span>
-    </div>
-    <h2>Brugere</h2>
-    <div id="admUsers"><span class="spin"></span></div>
+    <div class="muted">Brugere, kodeord og om nye kan registrere sig.</div>
+    <button class="btn small" id="adminOpen">Åbn administration</button>
   </div>
 
   <div class="panel">
@@ -858,6 +856,20 @@ body.loggedout nav { display: none; }
   </div>
 </section>
 
+<!-- ============ ADMINISTRATION ============ -->
+<section id="view-admin" class="view">
+  <div class="appbar"><h1>👑 Administration</h1></div>
+  <div class="panel" id="adminPanel">
+    <div class="togglerow">
+      <div><div class="tl">Tillad nye registreringer</div><div class="td">Slå fra, når alle i husstanden har en bruger</div></div>
+      <span class="switch"><input type="checkbox" id="admAllowReg"><span class="track"></span></span>
+    </div>
+    <h2>Brugere</h2>
+    <div id="admUsers"><span class="spin"></span></div>
+  </div>
+
+</section>
+
 <!-- Detail-modal -->
 <div class="overlay" id="overlay">
   <div class="sheet" id="sheet"></div>
@@ -876,6 +888,7 @@ body.loggedout nav { display: none; }
       <button type="button" id="userBtn" title="Konto og indstillinger" aria-haspopup="menu" aria-expanded="false"><span class="avatar" id="userInitial">·</span><span class="uname" id="userName">…</span></button>
       <div class="usermenu" id="userMenu" role="menu" hidden>
         <button type="button" role="menuitem" id="umSettings"><span class="i">⚙️</span>Indstillinger</button>
+        <button type="button" role="menuitem" id="umAdmin" hidden><span class="i">👑</span>Administration</button>
         <button type="button" role="menuitem" id="themeQuick" title="Skift mellem lyst og mørkt tema"><span class="i">🌙</span><span id="themeQuickTxt">Mørkt tema</span></button>
         <button type="button" role="menuitem" id="navLogout"><span class="i">🚪</span>Log ud</button>
       </div>
@@ -895,17 +908,21 @@ body.loggedout nav { display: none; }
 </div>
 
 <div id="toast"></div>
+<!-- Serveren saetter app/shared/ruter.js ind her (sidernes adresser, RUNE-ERFARINGER §9g). -->
+<script data-ruter></script>
 <script>
 'use strict';
 /* Versionsnummer - eneste sted det er defineret; build_rune.py laeser det herfra til runens version */
-const APP_VERSION = 29;
+const APP_VERSION = 30;
 /* ================= Min Bogreol ================= */
 
 /* Den lokale kopi serveres med `public, max-age=604800` og ligger paa en sti, der ALDRIG
  * skifter - uden `?v=` ville en opgradering af biblioteket (install-scriptet henter en
  * pinned version) blive skygget af browser- og Cloudflare-cachen i op til en uge.
  * Nummeret skal foelge den version, build_rune.py henter. */
-const LIB_QR = ['libs/html5-qrcode.min.js?v=2.3.8', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
+/* Adressen er ABSOLUT: paa /bog/<id> ville 'libs/...' slaas op som /bog/libs/..., give
+ * 404 og stille falde tilbage til CDN'en (§9g). */
+const LIB_QR = ['/libs/html5-qrcode.min.js?v=2.3.8', 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js'];
 const LIB_TESS = ['https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js'];
 
 let books = [];
@@ -1036,7 +1053,14 @@ function updateBook(id, patch) {
 /* Hvor langt nede i biblioteket var vi? Retter man en bog og gemmer, skal man
  * tilbage til SAMME sted i listen - ikke til toppen (RUNE-ERFARINGER §4). */
 let libScroll = 0;
+/* Sider, der staar under brugerknappen - den skal lyse, naar man er paa én af dem. */
+const BRUGERMENU_SIDER = ['more', 'admin'];
 function showView(name) {
+  // Administration kun for administratorer: serveren spaerrer dataene, men siden
+  // skal heller ikke staa tom og se i stykker ud (§9g).
+  if (name === 'admin' && !(me && me.isAdmin)) name = 'lib';
+  if (!document.getElementById('view-' + name)) name = 'lib';
+  lukArk();
   const aktiv = document.querySelector('.view.active');
   if (aktiv && aktiv.id === 'view-lib') libScroll = window.scrollY;
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
@@ -1046,14 +1070,81 @@ function showView(name) {
   if (name === 'stats') { renderStats(); }
   // Indstillinger naas via brugerknappen - markér den, ellers lyser intet i menuen paa den side.
   const ub = $('userBtn');
-  ub.classList.toggle('on', name === 'more');
-  ub.setAttribute('aria-current', name === 'more' ? 'page' : 'false');
+  ub.classList.toggle('on', BRUGERMENU_SIDER.includes(name));
+  ub.setAttribute('aria-current', BRUGERMENU_SIDER.includes(name) ? 'page' : 'false');
+  aktivSide = name;
+  synkAdresse();
   // Tilbage til biblioteket: samme sted som foer. Andre sider begynder i toppen.
   window.scrollTo(0, name === 'lib' ? libScroll : 0);
   if (typeof opdaterToTop === 'function') opdaterToTop();
   if (typeof byggToc === 'function') byggToc();
 }
 document.querySelectorAll('nav button[data-view]').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)));
+
+/* ---------- adresser (RUNE-ERFARINGER §9g) ----------
+ * Listen bor i app/shared/ruter.js, som serveren saetter ind i siden - samme liste
+ * afgoer der, hvilke stier der svarer med index.html. Én ting styrer adressen:
+ * synkAdresse(), kaldt af showView() og af detaljearket. Der skrives kun, naar stien
+ * FAKTISK er en anden (ellers laver tilbage-knappens egen optegning en ny post), og
+ * den foerste skrivning er replaceState (/ -> /bibliotek maa ikke koste et klik). */
+const { sideForSti, stiForSide, bogForSti } = bogreolRuter;
+const SIDE_TITEL = { lib: '', add: 'Tilføj bog', stats: 'Statistik', more: 'Indstillinger', admin: 'Administration' };
+const GRUNDTITEL = document.title;
+let aktivSide = 'lib', aabenBog = null, adresseKlar = false;
+/* holdAdresse: vi foelger en adresse, der ALLEREDE staar der (tilbage/frem, genindlaes) -
+ * saa maa der ikke skrives en ny post undervejs. */
+let holdAdresse = false;
+function synkAdresse(erstat) {
+  if (!me) return;                       // login-skaermen roerer ikke adressen
+  const bog = aabenBog && books.find(x => x.id === aabenBog);
+  const sti = bog ? stiForSide('bog', bog.id) : stiForSide(aktivSide);
+  if (!sti) return;
+  const titel = bog ? bog.title : SIDE_TITEL[aktivSide];
+  document.title = titel ? titel + ' · ' + GRUNDTITEL : GRUNDTITEL;
+  // Genvejen paa hjemmeskaermen skal aabne DEN side - iOS laeser manifestet, ikke adressen.
+  const man = document.querySelector('link[rel="manifest"]');
+  if (man) man.setAttribute('href', '/manifest.webmanifest?start=' + encodeURIComponent(sti));
+  if (location.pathname === sti) { adresseKlar = true; return; }
+  if (holdAdresse) return;
+  // ?opdateret=... fra opdaterApp() skal ikke foelge med rundt
+  const u = new URLSearchParams(location.search);
+  u.delete('opdateret');
+  const qs = u.toString() ? '?' + u : '';
+  // `skubbet` = posten blev lagt oven paa en af appens egne. Kun dér maa »Luk« gaa et
+  // skridt tilbage; en post, der kom udefra (bogmaerke, genindlaes), ville ellers
+  // sende brugeren ud af appen. En erstatning arver den post, den erstatter.
+  const skub = adresseKlar && !erstat;
+  const skubbet = skub || !!(adresseKlar && history.state && history.state.skubbet);
+  history[skub ? 'pushState' : 'replaceState']({ bog: bog ? bog.id : null, skubbet }, '', sti + qs);
+  adresseKlar = true;
+}
+/* Den side, adressen peger paa - laeses FOER login, saa man lander rigtigt bagefter. */
+function sideFraAdresse() {
+  const side = sideForSti(location.pathname);
+  if (side === 'bog') {
+    const id = String(bogForSti(location.pathname) || '').toLowerCase();
+    const b = books.find(x => String(x.id).toLowerCase() === id && !x.deleted);
+    return { side: 'lib', bog: b ? b.id : null };
+  }
+  return { side: side || 'lib', bog: null };
+}
+function gaaTilAdresse() {
+  const m = sideFraAdresse();
+  holdAdresse = !!m.bog;          // /bog/<id> maa ikke foerst blive til /bibliotek
+  try { showView(m.side); } finally { holdAdresse = false; }
+  if (m.bog) openDetail(m.bog);
+}
+window.addEventListener('popstate', () => {
+  if (!me) return;
+  const m = sideFraAdresse();
+  holdAdresse = true;
+  try {
+    if (m.side !== aktivSide) showView(m.side);
+    if (m.bog && m.bog !== aabenBog) openDetail(m.bog);
+    else if (!m.bog && aabenBog) lukArk();
+    synkAdresse();   // skriver intet her - men titel og manifest skal foelge med
+  } finally { holdAdresse = false; }
+});
 
 visNyVersion(null);
 
@@ -1089,6 +1180,8 @@ function userMenu(on) {
 }
 $('userBtn').addEventListener('click', e => { e.stopPropagation(); userMenu($('userMenu').hidden); });
 $('umSettings').addEventListener('click', () => { userMenu(false); showView('more'); if (navFolded || smalSkaerm()) navOpen(false); });
+$('umAdmin').addEventListener('click', () => { userMenu(false); showView('admin'); if (navFolded || smalSkaerm()) navOpen(false); });
+$('adminOpen').addEventListener('click', () => showView('admin'));
 document.addEventListener('click', e => { if (!e.target.closest('.userwrap')) userMenu(false); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') userMenu(false); });
 $('navFold').addEventListener('click', () => userMenu(false));
@@ -1409,6 +1502,15 @@ function renderList() {
   $('list').innerHTML = html;
   byggToc();
 }
+$('copyListBtn').addEventListener('click', () => {
+  const arr = getFiltered();
+  if (!arr.length) { toast('Listen er tom'); return; }
+  const chip = CHIPS.find(c => c.id === chipSel) || CHIPS[0];
+  const soeg = $('q').value.trim();
+  const overskrift = `${GRUNDTITEL} – ${stripEmoji(chip.label)}${soeg ? ` · »${soeg}«` : ''} (${arr.length} ${arr.length === 1 ? 'bog' : 'bøger'})`;
+  kopierRigt(listeSomRigTekst(arr, overskrift))
+    .then(ok => toast(ok ? `📋 ${arr.length} ${arr.length === 1 ? 'bog' : 'bøger'} kopieret` : 'Kunne ikke kopiere i denne browser'));
+});
 $('list').addEventListener('click', e => {
   const card = e.target.closest('.bookcard');
   if (card) openDetail(card.dataset.id);
@@ -2010,10 +2112,120 @@ function drawScaled(img, maxW) {
   return c;
 }
 
+/* --- rig tekst (start) ---
+ * Kopiér som rig tekst (RUNE-ERFARINGER §9e): text/html til Notes, Mail, Word og
+ * OneNote + en LAESBAR text/plain. Billedet kommer kun med som en rigtig, offentlig
+ * https-adresse:
+ *  - egne covers (/api/cover/...) kraever login - det indsatte dokument har ingen
+ *    cookie og ville vise et doedt billede, saa de udelades
+ *  - data:-adresser tager Apple Notes ikke (blaat ?), og de sprænger renderernes
+ *    adresse-loft - dem sender vi aldrig
+ * Apple Notes henter i oevrigt heller ikke altid fremmede https-billeder; tekst og
+ * formatering kommer med uanset. Funktionerne er rene og proeves i node
+ * (tests/rigtekst.test.mjs), som henter dem UD AF denne blok. */
+const RIG_ADRESSE_MAKS = 2000;
+function rigCoverUrl(b) {
+  if (!b || b.coverVer) return '';
+  const u = String(b.cover || '').trim().replace(/^http:\/\//i, 'https://');
+  return u.length <= RIG_ADRESSE_MAKS && /^https:\/\/[^\s"'<>]+$/i.test(u) ? u : '';
+}
+function rigStatus(b) {
+  const dele = [];
+  if (b.read) dele.push('Læst' + (b.readYear ? ' ' + b.readYear : ''));
+  else if (b.reading) dele.push('I gang');
+  else dele.push('Ikke læst');
+  if (b.owned) dele.push('Ejet' + (b.format === 'hardback' ? ' (hardback)' : b.format === 'paperback' ? ' (paperback)' : ''));
+  if (b.loaned) dele.push('Udlånt' + (b.loanedTo ? ' til ' + b.loanedTo : ''));
+  if (b.wishlist) dele.push('På ønskelisten');
+  return dele.join(' · ');
+}
+const rigSerie = b => b.series ? b.series + (b.seriesNo ? ' #' + b.seriesNo : '') : '';
+function bogSomRigTekst(b, origin) {
+  const forfattere = (b.authors || []).join(', ');
+  const cover = rigCoverUrl(b);
+  const felter = [
+    ['Forfatter', forfattere], ['Serie', rigSerie(b)], ['ISBN', b.isbn],
+    ['Udgave', [b.edition, b.printing].filter(Boolean).join(' · ')],
+    ['Status', rigStatus(b)],
+    ['Vurdering', b.rating ? '★'.repeat(b.rating) + '☆'.repeat(5 - b.rating) : '']
+  ].filter(f => f[1]);
+  const link = origin && /^https?:\/\//.test(origin) ? origin + '/bog/' + encodeURIComponent(b.id) : '';
+  const noter = String(b.notes || '').trim();
+  const html = '<div>'
+    + `<h2>${esc(b.title)}</h2>`
+    + (cover ? `<p><img src="${esc(cover)}" alt="${esc('Forside: ' + b.title)}" width="120"></p>` : '')
+    + '<ul>' + felter.map(([k, v]) => `<li><b>${esc(k)}:</b> ${esc(v)}</li>`).join('') + '</ul>'
+    + (noter ? `<p><b>Noter</b><br>${esc(noter).replace(/\r?\n/g, '<br>')}</p>` : '')
+    + (link ? `<p><a href="${esc(link)}">Åbn i Min Bogreol</a></p>` : '')
+    + '</div>';
+  const tekst = [b.title, ...felter.map(([k, v]) => `${k}: ${v}`)]
+    .concat(noter ? ['', 'Noter:', noter] : [])
+    .concat(link ? ['', link] : []).join('\n');
+  return { html, tekst };
+}
+function listeSomRigTekst(arr, overskrift) {
+  const linje = b => {
+    const ekstra = [rigSerie(b), rigStatus(b)].filter(Boolean).join(' · ');
+    return { titel: b.title, forf: (b.authors || []).join(', '), ekstra };
+  };
+  const rk = arr.map(linje);
+  const html = `<h2>${esc(overskrift)}</h2><ol>`
+    + rk.map(l => `<li><b>${esc(l.titel)}</b>${l.forf ? ' – ' + esc(l.forf) : ''}${l.ekstra ? ` <i>(${esc(l.ekstra)})</i>` : ''}</li>`).join('')
+    + '</ol>';
+  const tekst = [overskrift, ''].concat(rk.map((l, i) =>
+    `${i + 1}. ${l.titel}${l.forf ? ' – ' + l.forf : ''}${l.ekstra ? ' (' + l.ekstra + ')' : ''}`)).join('\n');
+  return { html, tekst };
+}
+/* Skriv til udklipsholderen. Kaldes SYNKRONT i klikket: ClipboardItem oprettes her,
+ * med loefter som vaerdier, foer der ventes paa noget (Safari kraever det). Over http
+ * (panelets IP:port) findes navigator.clipboard ikke - saa bruges copy-haendelsen, som
+ * ogsaa baerer begge formater. Svarer med et loefte om true/false. */
+function kopierRigt(data) {
+  const n = typeof navigator !== 'undefined' ? navigator : {};
+  if (window.isSecureContext && n.clipboard && n.clipboard.write && typeof ClipboardItem === 'function') {
+    try {
+      const item = new ClipboardItem({
+        'text/html': Promise.resolve(new Blob([data.html], { type: 'text/html' })),
+        'text/plain': Promise.resolve(new Blob([data.tekst], { type: 'text/plain' }))
+      });
+      return n.clipboard.write([item]).then(() => true, () => kopierViaHaendelse(data));
+    } catch (e) { /* aeldre browser uden loefter i ClipboardItem */ }
+  }
+  return Promise.resolve(kopierViaHaendelse(data));
+}
+function kopierViaHaendelse(data) {
+  // copy-haendelsen fyrer kun med en markering - giv den et skjult felt at kopiere fra.
+  const ta = document.createElement('textarea');
+  ta.value = data.tekst;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed'; ta.style.opacity = '0'; ta.style.top = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let sat = false;
+  const lyt = e => {
+    e.clipboardData.setData('text/plain', data.tekst);
+    e.clipboardData.setData('text/html', data.html);
+    e.preventDefault();
+    sat = true;
+  };
+  document.addEventListener('copy', lyt, true);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  finally { document.removeEventListener('copy', lyt, true); ta.remove(); }
+  return ok && sat;
+}
+/* --- rig tekst (slut) --- */
+
 /* ---------- detail sheet ---------- */
 function openDetail(id) {
   const b = books.find(x => x.id === id && !x.deleted);
   if (!b) return;
+  if (aktivSide !== 'lib') showView('lib');   // arket ligger over biblioteket
+  // En bog aabnet inde fra et aabent ark (serien) ERSTATTER posten - ellers aabner
+  // »Luk« den forrige bog i stedet for at vende tilbage til listen.
+  const erstat = !!aabenBog;
+  aabenBog = b.id;
+  synkAdresse(erstat);
   const sheet = $('sheet');
   sheet.innerHTML = `
     <div class="grab"></div>
@@ -2085,6 +2297,7 @@ function openDetail(id) {
         </div>`).join('')}</div>`;
     })()}
     ${b.series ? `<button class="btn sec" id="dSeries">🔗 Se serien »${esc(b.series)}« – find de bøger du mangler</button><div id="dSeriesBox"></div>` : ''}
+    <button class="btn sec" id="dCopy" title="Titel, forfatter, cover og noter – med formatering">📋 Kopiér bogen</button>
     <button class="btn sec" id="dEdit">✏️ Redigér oplysninger</button>
     <button class="btn danger" id="dDelete">Slet bogen</button>
     <button class="btn sec" id="dClose">Luk</button>`;
@@ -2136,7 +2349,7 @@ function openDetail(id) {
   sheet.querySelectorAll('[data-book]').forEach(el => el.addEventListener('click', () => {
     if (el.dataset.book !== id) openDetail(el.dataset.book);
   }));
-  $('dEdit').addEventListener('click', () => { closeSheet(); openForm(b, b.id); });
+  $('dEdit').addEventListener('click', () => { lukArk(); openForm(b, b.id); });
   $('dDelete').addEventListener('click', e => {
     if (e.target.dataset.armed) {
       updateBook(id, { deleted: true });
@@ -2148,8 +2361,19 @@ function openDetail(id) {
     }
   });
   $('dClose').addEventListener('click', closeSheet);
+  // Byg og skriv SYNKRONT i klikket - ClipboardItem skal oprettes inde i det (Safari).
+  $('dCopy').addEventListener('click', () => kopierRigt(bogSomRigTekst(books.find(x => x.id === id) || b, location.origin))
+    .then(ok => toast(ok ? '📋 Bogen er kopieret' : 'Kunne ikke kopiere i denne browser')));
 }
-function closeSheet() { $('overlay').classList.remove('open'); }
+/* lukArk() skjuler kun arket; closeSheet() er brugerens luk og retter ogsaa adressen.
+ * Blev arket aabnet inde fra appen (pushState), er lukning = et skridt tilbage - saa
+ * tilbage-knappen ikke bagefter aabner den bog, man lige lukkede. */
+function lukArk() { $('overlay').classList.remove('open'); aabenBog = null; }
+function closeSheet() {
+  const fraAppen = aabenBog && history.state && history.state.skubbet && history.state.bog === aabenBog;
+  lukArk();
+  if (fraAppen) history.back(); else synkAdresse();
+}
 $('overlay').addEventListener('click', e => { if (e.target === $('overlay')) closeSheet(); });
 
 /* ---------- series explorer ---------- */
@@ -2522,14 +2746,16 @@ $('importFile').addEventListener('change', e => {
 /* ---------- login / konto ---------- */
 function showLogin() {
   me = null;
+  lukArk();
   visKodefelt(false);
   $('totpKoder').innerHTML = '';   // en anden bruger paa samme skaerm maa ikke se dem
+  $('totpAdgang').innerHTML = '';
   document.body.classList.add('loggedout');
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-login'));
 }
 function showApp() {
   document.body.classList.remove('loggedout');
-  showView('lib');
+  gaaTilAdresse();
 }
 async function loadBooks() {
   const d = await api('/api/books');
@@ -2690,7 +2916,8 @@ function renderAccount() {
     } catch (e) { toast('⚠️ ' + e.message); }
   }));
   renderTotp();
-  $('adminPanel').style.display = me.isAdmin ? 'block' : 'none';
+  $('adminLink').hidden = !me.isAdmin;
+  $('umAdmin').hidden = !me.isAdmin;
   if (me.isAdmin) renderAdmin();
   renderKeys();
   hentMofiboStatus();
@@ -2820,6 +3047,7 @@ function visTotpOpsaetning(d) {
       const r = await api('/api/totp/enable', { code: $('totpCode').value });
       me = r.me;
       visGenoprettelseskoder(r.recovery);
+      visAdgangEfterTotp(r.adgang);
       toast('🛡️ Totrinsbekræftelse er slået til');
       renderTotp();
     } catch (e) { $('totpError').textContent = e.message; }
@@ -2842,6 +3070,43 @@ function visGenoprettelseskoder(koder) {
   $('totpGemt').addEventListener('click', () => { $('totpKoder').innerHTML = ''; });
 }
 
+/* Naar 2FA slaas til, doer de andre sessioner - men adgangsnoegler og forbundne apps
+ * lever videre. Den, der havde kodeordet, kan have lavet en. Vi tilbagekalder ikke
+ * automatisk (det ville bryde ejerens egne connectors), men viser tallet og en knap. */
+const flertal = (n, en, flere) => `${n} ${n === 1 ? en : flere}`;
+function adgangTekst(a) {
+  return `${flertal(a.noegler, 'aktiv adgangsnøgle', 'aktive adgangsnøgler')} og ${flertal(a.apps, 'forbundet app', 'forbundne apps')}`;
+}
+function visAdgangEfterTotp(a) {
+  const boks = $('totpAdgang');
+  if (!a || (!a.noegler && !a.apps)) {
+    boks.innerHTML = a && a.passkeys ? `<div class="notice info">Du har ${flertal(a.passkeys, 'passkey', 'passkeys')} — de logger ind uden engangskode. Fjern dem ovenfor, du ikke kender.</div>` : '';
+    return;
+  }
+  boks.innerHTML = `<div class="notice warn">
+      <b>Du har ${esc(adgangTekst(a))}.</b>
+      <div style="margin-top:4px">De virker stadig uden kodeord og engangskode. Kender du dem ikke alle — eller er du i tvivl om, hvem der har haft dit kodeord — så tilbagekald dem. Dine egne connectors skal derefter forbindes igen.${a.passkeys ? ` Tjek også dine ${flertal(a.passkeys, 'passkey', 'passkeys')} ovenfor.` : ''}</div>
+      <button class="btn small danger" id="adgangRevoke" style="margin-top:8px">Tilbagekald alle nøgler og forbundne apps</button>
+      <button class="btn small sec" id="adgangBehold" style="margin-top:8px">Behold dem</button>
+    </div>`;
+  $('adgangBehold').addEventListener('click', () => { boks.innerHTML = ''; });
+  $('adgangRevoke').addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = '1';
+      btn.textContent = 'Sikker? Tryk igen for at tilbagekalde alle';
+      setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.textContent = 'Tilbagekald alle nøgler og forbundne apps'; } }, 5000);
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const d = await api('/api/keys/revoke-all', { confirm: true });
+      boks.innerHTML = `<div class="notice ok">Tilbagekaldt: ${esc(adgangTekst(d.tilbagekaldt))}.</div>`;
+      renderKeys();
+    } catch (err) { btn.disabled = false; $('totpError').textContent = err.message; }
+  });
+}
+
 /* ---------- admin-panel ---------- */
 async function renderAdmin() {
   try {
@@ -2853,7 +3118,7 @@ async function renderAdmin() {
           <div class="un">${u.isAdmin ? '👑 ' : ''}${esc(u.username)}${me && u.id === me.id ? ' <span class="muted">(dig)</span>' : ''}</div>
           <div class="um">${u.books} bøger · ${u.passkeys} passkeys${u.totp ? ' · 🛡️ totrin' : ''} · oprettet ${esc((u.created || '').slice(0, 10))}</div>
         </div>
-        <button class="iconbtn" data-act="pw">Nyt kodeord</button>
+        ${me && u.id === me.id ? '' : '<button class="iconbtn" data-act="pw">Nyt kodeord</button>'}
         ${u.totp && !(me && u.id === me.id) ? '<button class="iconbtn warn" data-act="totp">Fjern totrin</button>' : ''}
         <button class="iconbtn" data-act="role">${u.isAdmin ? 'Fjern admin' : 'Gør til admin'}</button>
         ${me && u.id === me.id ? '' : '<button class="iconbtn warn" data-act="del">Slet</button>'}
